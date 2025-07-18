@@ -1,2 +1,2 @@
 # HackCLI
-Faster than sloppy Slack, that's for sure. Being able to check a channel or DM without leaving the IDE seems goated. 
+Faster than alt-tabbing to sloppy Slack every 5 minutes. Check channels or DMs, add devlogs and ship projects, all without leaving your IDE.
