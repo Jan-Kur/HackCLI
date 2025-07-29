@@ -9,15 +9,9 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "hackcli",
 	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
+	Long: `To use HackCLI you first need to log in with slack.
+You can do so by running "hackcli login".
+After that you will be able to use all HackCLI features by running one of the commands below:`,
 }
 
 func Execute() {
