@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/pkg/browser"
 	"github.com/slack-go/slack"
 )
@@ -165,7 +166,9 @@ func (m model) View() string {
 		if m.loggedIn {
 			s += "✨ You are already logged in ✨\n\nGo ahead and use HackCLI 🥳\n\n"
 		} else {
-			s += "Press enter to log in with slack\n\n"
+			s += lipgloss.NewStyle().Faint(true).Render("Press ") +
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#18c39bff")).Bold(true).Render("enter") +
+				lipgloss.NewStyle().Faint(true).Render(" to log in with slack\n\n")
 		}
 	case "inputToken":
 		s += fmt.Sprint(m.spinner.View(), " ", "Waiting for authorization\n")
@@ -174,7 +177,10 @@ func (m model) View() string {
 		s += "✅ SUCCESS ✅\n\nYou are now logged in and can use HackCLI 🥳\n\n"
 	}
 	s += m.errorMessage
-	s += "Press q to quit"
+	s += lipgloss.NewStyle().Faint(true).Render("Press ") +
+		lipgloss.NewStyle().Bold(true).Render("q") +
+		lipgloss.NewStyle().Faint(true).Render(" to quit")
+
 	return s
 }
 
