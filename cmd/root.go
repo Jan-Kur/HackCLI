@@ -10,7 +10,7 @@ var rootCmd = &cobra.Command{
 	Use:   "hackcli",
 	Short: "A brief description of your application",
 	Long: `To use HackCLI you first need to log in with slack.
-You can do so by running "hackcli login".
+You can do so by running: hackcli login.
 After that you will be able to use all HackCLI features by running one of the commands below:`,
 }
 

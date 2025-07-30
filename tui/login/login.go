@@ -1,4 +1,4 @@
-package tui
+package login
 
 import (
 	"encoding/json"
@@ -176,10 +176,11 @@ func (m model) View() string {
 	case "end":
 		s += "✅ SUCCESS ✅\n\nYou are now logged in and can use HackCLI 🥳\n\n"
 	}
-	s += m.errorMessage
+	s += lipgloss.NewStyle().Foreground(lipgloss.Color("#c92323ff")).Render(m.errorMessage)
+
 	s += lipgloss.NewStyle().Faint(true).Render("Press ") +
 		lipgloss.NewStyle().Bold(true).Render("q") +
-		lipgloss.NewStyle().Faint(true).Render(" to quit")
+		lipgloss.NewStyle().Faint(true).Render(" to quit\n")
 
 	return s
 }
