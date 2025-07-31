@@ -28,7 +28,7 @@ func init() {
 func edit(cmd *cobra.Command, args []string) {
 	if len(args) == 0 {
 		fmt.Printf(`Usage: hackcli edit [argument]
-		Available arguments: %s`, validArguments)
+Available arguments: %s`, validArguments)
 		os.Exit(1)
 	}
 	var program *tea.Program
