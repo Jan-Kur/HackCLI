@@ -50,25 +50,25 @@ func getConfigPath() (string, error) {
 	return filepath.Join(baseDir, "HackCLI", "config.json"), nil
 }
 
-func GetClient() (*slack.Client, error) {
+func GetToken() (string, error) {
 	configLocation, err := getConfigPath()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	data, err := os.ReadFile(configLocation)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	var config Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
+		return "", err
 	}
 
 	if config.Token == "" {
-		return nil, fmt.Errorf("no token found in config")
+		return "", fmt.Errorf("no token found in config")
 	}
 
-	return slack.New(config.Token), nil
+	return config.Token, nil
 }

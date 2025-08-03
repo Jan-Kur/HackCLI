@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
+	sl "github.com/Jan-Kur/HackCLI/slack"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pkg/browser"
-	"github.com/slack-go/slack"
 )
 
 type model struct {
@@ -41,30 +42,7 @@ func InitialModel() model {
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
 
-	var loggedIn bool
-
-	baseDir, err := os.UserConfigDir()
-	if err != nil {
-		panic(err)
-	}
-	folderDir := filepath.Join(baseDir, "HackCLI")
-	configLocation := filepath.Join(folderDir, "config.json")
-	_, err = os.Stat(configLocation)
-	if err == nil {
-		data, _ := os.ReadFile(configLocation)
-
-		var config Config
-		json.Unmarshal(data, &config)
-
-		client := slack.New(config.Token)
-		_, err := client.AuthTest()
-		loggedIn = err == nil
-
-	} else if os.IsNotExist(err) {
-		loggedIn = false
-	} else {
-		panic(err)
-	}
+	loggedIn := sl.IsLoggedIn()
 
 	return model{
 		textInput:    ti,
@@ -188,7 +166,7 @@ func (m model) View() string {
 func openBrowser() error {
 	params := url.Values{}
 	params.Add("client_id", "9218969411171.9249336220343")
-	params.Add("user_scope", "users:read")
+	params.Add("user_scope", "users:read,users.profile:read,users:write,users.profile:write")
 	params.Add("redirect_uri", "https://hackcli-backend.vercel.app/api/callback")
 
 	oauthURL := "https://slack.com/oauth/v2/authorize?" + params.Encode()

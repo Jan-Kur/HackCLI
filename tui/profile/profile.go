@@ -1,8 +1,13 @@
 package profile
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
+	"time"
 
 	sl "github.com/Jan-Kur/HackCLI/slack"
 
@@ -12,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	"github.com/slack-go/slack"
 )
 
 var (
@@ -19,6 +25,9 @@ var (
 	selectedStyle = lg.NewStyle().Foreground(lg.Color("#f16de6ff"))
 	normalStyle   = lg.NewStyle().Foreground(lg.Color("#7c7c7cff"))
 )
+
+type endMsg struct {
+}
 
 type item struct {
 	title string
@@ -40,6 +49,7 @@ type model struct {
 	list          list.Model
 	state         string
 	selectedIndex int
+	errorMessage  error
 }
 
 func (m model) Init() tea.Cmd {
@@ -47,29 +57,105 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "enter":
-			client, err := sl.GetClient()
-			if err != nil {
-				fmt.Printf("Error creating a slack client: %v\n", err)
-				os.Exit(1)
+	switch msg.(type) {
+	case endMsg:
+		return m, tea.Quit
+	}
+
+	switch m.state {
+	case "initial":
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "enter":
+				list := m.list.Items()
+				realName := list[0].(item).input.Value()
+				displayName := list[1].(item).input.Value()
+				statusText := list[2].(item).input.Value()
+				statusEmoji := list[3].(item).input.Value()
+
+				token, err := sl.GetToken()
+				if err != nil {
+					fmt.Printf("Error creating a slack client: %v\n", err)
+					os.Exit(1)
+				}
+
+				profile, err := json.Marshal(&struct {
+					RealName    string `json:"real_name"`
+					DisplayName string `json:"display_name"`
+					StatusText  string `json:"status_text"`
+					StatusEmoji string `json:"status_emoji"`
+				}{
+					RealName:    realName,
+					DisplayName: displayName,
+					StatusText:  statusText,
+					StatusEmoji: statusEmoji,
+				})
+				if err != nil {
+					m.errorMessage = err
+					m.state = "error"
+					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
+						return endMsg{}
+					})
+				}
+				values := url.Values{
+					"token":   {token},
+					"profile": {string(profile)},
+				}
+
+				resp, err := http.PostForm("https://slack.com/api/users.profile.set", values)
+				if err != nil {
+					m.errorMessage = err
+					m.state = "error"
+					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
+						return endMsg{}
+					})
+				}
+
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					m.errorMessage = err
+					m.state = "error"
+					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
+						return endMsg{}
+					})
+				}
+
+				var result struct {
+					OK    bool   `json:"ok"`
+					Error string `json:"error,omitempty"`
+				}
+
+				if err := json.Unmarshal(body, &result); err != nil {
+					m.errorMessage = err
+					m.state = "error"
+					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
+						return endMsg{}
+					})
+				}
+
+				if !result.OK {
+					m.errorMessage = fmt.Errorf("%v", result.Error)
+					m.state = "error"
+					return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
+						return endMsg{}
+					})
+				}
+
+				m.state = "end"
+
+				return m, nil
 			}
-
-			//authResp, err := client.AuthTest()
-			//if err != nil {
-			//	fmt.Printf("Error authorizing with slack: %v\n", err)
-			//	os.Exit(1)
-			//}
-
-			list := m.list.Items()
-			client.SetUserCustomStatus(list[2].(item).input.Value(), list[3].(item).input.Value(), 0)
-			client.SetUserRealName(list[0].(item).input.Value())
+		case tea.WindowSizeMsg:
+			h, v := docStyle.GetFrameSize()
+			m.list.SetSize(msg.Width-h, msg.Height-v)
 		}
-	case tea.WindowSizeMsg:
-		h, v := docStyle.GetFrameSize()
-		m.list.SetSize(msg.Width-h, msg.Height-v)
+	case "end":
+		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg {
+			return endMsg{}
+		})
 	}
 
 	var cmd tea.Cmd
@@ -111,38 +197,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	return docStyle.Render(m.list.View())
+	switch m.state {
+	case "initial":
+		return docStyle.Render(m.list.View())
+	case "error":
+		s := lg.NewStyle().Bold(true).Foreground(lg.Color("rgba(255, 73, 124, 1)")).Render("❌ ERROR ❌\n\n")
+		s += m.errorMessage.Error()
+		return s
+	case "end":
+		s := lg.NewStyle().Bold(true).Foreground(lg.Color("#77CCAA")).Render("✅ SUCCESS ✅")
+		s += "\n\nYour profile has been updated"
+		return s
+	}
+	return ""
 }
 
 func Start() model {
-	client, err := sl.GetClient()
+	token, err := sl.GetToken()
 	if err != nil {
-		fmt.Printf("Error creating a slack client: %v\n", err)
+		fmt.Printf("Error getting token: %v\n", err)
 		os.Exit(1)
 	}
 
-	authResp, err := client.AuthTest()
+	api := slack.New(token)
+
+	authResp, err := api.AuthTest()
 	if err != nil {
 		fmt.Printf("Error authorizing with slack: %v\n", err)
 		os.Exit(1)
 	}
 
-	user, err := client.GetUserInfo(authResp.UserID)
+	user, err := api.GetUserProfile(&slack.GetUserProfileParameters{
+		UserID:        authResp.UserID,
+		IncludeLabels: true,
+	})
 	if err != nil {
-		fmt.Printf("Error getting user information: %v\n", err)
+		fmt.Printf("Error getting user info %v\n", err)
 		os.Exit(1)
 	}
 
-	var favActivitiesValue string
-	for _, field := range user.Profile.FieldsMap() {
-		if field.Label == "Fav Activities" {
-			favActivitiesValue = field.Value
-			break
-		}
-	}
-
 	fullName := textinput.New()
-	fullName.SetValue(user.Profile.RealName)
+	fullName.SetValue(user.RealName)
 	fullName.Focus()
 	fullName.Width = 100
 	fullName.Cursor.SetMode(cursor.CursorBlink)
@@ -150,7 +245,7 @@ func Start() model {
 	fullName.Cursor.Style = selectedStyle
 
 	displayName := textinput.New()
-	displayName.SetValue(user.Profile.DisplayName)
+	displayName.SetValue(user.DisplayName)
 	displayName.Blur()
 	displayName.Width = 100
 	displayName.Cursor.SetMode(cursor.CursorHide)
@@ -158,7 +253,7 @@ func Start() model {
 	displayName.Cursor.Style = normalStyle
 
 	status := textinput.New()
-	status.SetValue(user.Profile.StatusText)
+	status.SetValue(user.StatusText)
 	status.Blur()
 	status.Width = 100
 	status.Cursor.SetMode(cursor.CursorHide)
@@ -166,27 +261,18 @@ func Start() model {
 	status.Cursor.Style = normalStyle
 
 	statusEmoji := textinput.New()
-	statusEmoji.SetValue(user.Profile.StatusEmoji)
+	statusEmoji.SetValue(user.StatusEmoji)
 	statusEmoji.Blur()
 	statusEmoji.Width = 100
 	statusEmoji.Cursor.SetMode(cursor.CursorHide)
 	statusEmoji.TextStyle = normalStyle
 	statusEmoji.Cursor.Style = normalStyle
 
-	favActivities := textinput.New()
-	favActivities.SetValue(favActivitiesValue)
-	favActivities.Blur()
-	favActivities.Width = 100
-	favActivities.Cursor.SetMode(cursor.CursorHide)
-	favActivities.TextStyle = normalStyle
-	favActivities.Cursor.Style = normalStyle
-
 	items := []list.Item{
 		item{title: "Full name", input: fullName},
 		item{title: "Display name", input: displayName},
 		item{title: "Status", input: status},
 		item{title: "Status emoji", input: statusEmoji},
-		item{title: "Fav activities", input: favActivities},
 	}
 
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
