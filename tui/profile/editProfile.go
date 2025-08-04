@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	sl "github.com/Jan-Kur/HackCLI/slack"
+	sl "github.com/Jan-Kur/HackCLI/api"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"

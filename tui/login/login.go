@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	sl "github.com/Jan-Kur/HackCLI/slack"
+	sl "github.com/Jan-Kur/HackCLI/api"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -146,7 +146,9 @@ func (m model) View() string {
 		} else {
 			s += lipgloss.NewStyle().Faint(true).Render("Press ") +
 				lipgloss.NewStyle().Foreground(lipgloss.Color("#18c39bff")).Bold(true).Render("enter") +
-				lipgloss.NewStyle().Faint(true).Render(" to log in with slack\n\n")
+				lipgloss.NewStyle().Faint(true).Render(" to log in with the ") +
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#18c39bff")).Bold(true).Render("Hack Club") +
+				lipgloss.NewStyle().Faint(true).Render(" workspace\n\n")
 		}
 	case "inputToken":
 		s += fmt.Sprint(m.spinner.View(), " ", "Waiting for authorization\n")

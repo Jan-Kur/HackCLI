@@ -1,4 +1,4 @@
-package slack
+package api
 
 import (
 	"encoding/json"
@@ -37,9 +37,16 @@ func IsLoggedIn() bool {
 	}
 
 	client := slack.New(config.Token)
-	_, err = client.AuthTest()
+	authResp, err := client.AuthTest()
+	if err != nil {
+		return false
+	}
 
-	return err == nil
+	if authResp.TeamID != "T0266FRGM" {
+		return false
+	}
+
+	return true
 }
 
 func getConfigPath() (string, error) {
