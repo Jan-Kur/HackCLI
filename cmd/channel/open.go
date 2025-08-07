@@ -35,7 +35,16 @@ func open(cmd *cobra.Command, args []string) {
 		initialChannel = args[0]
 	}
 
-	program := tea.NewProgram(channel.Start(initialChannel), tea.WithAltScreen())
+	app := channel.Start(initialChannel)
+
+	program := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseAllMotion())
+
+	go func() {
+		for msg := range app.MsgChan {
+			program.Send(msg)
+		}
+	}()
+
 	_, err := program.Run()
 	if err != nil {
 		fmt.Println("Something went wrong:", err)

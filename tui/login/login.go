@@ -11,7 +11,6 @@ import (
 	"time"
 
 	sl "github.com/Jan-Kur/HackCLI/api"
-
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -156,6 +155,7 @@ func (m model) View() string {
 	case "end":
 		s += "✅ SUCCESS ✅\n\nYou are now logged in and can use HackCLI 🥳\n\n"
 	}
+
 	s += lipgloss.NewStyle().Foreground(lipgloss.Color("#c92323ff")).Render(m.errorMessage)
 
 	s += lipgloss.NewStyle().Faint(true).Render("Press ") +
@@ -168,7 +168,7 @@ func (m model) View() string {
 func openBrowser() error {
 	params := url.Values{}
 	params.Add("client_id", "9218969411171.9249336220343")
-	params.Add("user_scope", "users:read,users.profile:read,users:write,users.profile:write")
+	params.Add("user_scope", "users:read,users.profile:read,users:write,users.profile:write,channels:read,groups:read,im:read,mpim:read")
 	params.Add("redirect_uri", "https://hackcli-backend.vercel.app/api/callback")
 
 	oauthURL := "https://slack.com/oauth/v2/authorize?" + params.Encode()
