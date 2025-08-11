@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/Jan-Kur/HackCLI/api"
-	"github.com/Jan-Kur/HackCLI/tui/styles"
+	"github.com/Jan-Kur/HackCLI/styles"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,6 +35,7 @@ type app struct {
 	botApi         *slack.Client
 	MsgChan        chan tea.Msg
 	currentChannel string
+	userCache      map[string]string
 }
 
 type model struct {
@@ -48,29 +49,50 @@ type model struct {
 }
 
 type message struct {
-	ts        string
-	threadId  string
-	user      string
-	content   string
-	reactions map[string]int
-	thread    []message
+	ts       string
+	threadId string
+	user     string
+	content  string
+	//reactions map[string]int
+	//thread    []message
 }
 
 type sidebar struct {
 	items        []sidebarItem
 	selectedItem int
+	openChannel  int
 	width        int
 	height       int
 }
 
 type sidebarItem struct {
 	title string
+	id    string
 }
 
-type slackMsg struct {
+type channelSelectedMsg struct {
+	id string
+}
+
+type newSlackMessageMsg struct {
+	message message
+}
+
+type historyLoadedMsg struct {
+	messages []message
+}
+
+type userInfoLoadedMsg struct {
+	user *slack.User
 }
 
 func Start(initialChannel string) *app {
+	f, err := os.Create("debug.log")
+	if err != nil {
+		panic(err)
+	}
+	log.SetOutput(f)
+
 	userToken, err := api.GetToken()
 	if err != nil {
 		panic("Error getting token")
@@ -83,29 +105,29 @@ func Start(initialChannel string) *app {
 		panic("Error logging in")
 	}
 
-	params := &slack.GetConversationsForUserParameters{
+	userConvParams := &slack.GetConversationsForUserParameters{
 		UserID:          authResp.UserID,
 		Types:           []string{"public_channel", "private_channel"},
 		ExcludeArchived: true,
-		Limit:           300,
+		Limit:           200,
 	}
-	var allChannels []slack.Channel
+	var userChannels []slack.Channel
 	for {
-		channels, cursor, err := userApi.GetConversationsForUser(params)
+		channels, cursor, err := userApi.GetConversationsForUser(userConvParams)
 		if err != nil {
 			panic(fmt.Sprintf("Error getting channels: %v", err))
 		}
-		allChannels = append(allChannels, channels...)
+		userChannels = append(userChannels, channels...)
 		if cursor == "" {
 			break
 		}
-		params.Cursor = cursor
+		userConvParams.Cursor = cursor
 	}
 
 	initialChannel = strings.TrimPrefix(initialChannel, "#")
 
 	var initialChannelID string
-	for _, ch := range allChannels {
+	for _, ch := range userChannels {
 		if ch.Name == initialChannel {
 			initialChannelID = ch.ID
 			break
@@ -123,6 +145,7 @@ func Start(initialChannel string) *app {
 	}
 
 	botApi := slack.New(botToken, slack.OptionAppLevelToken(appToken))
+
 	socketClient := socketmode.New(
 		botApi,
 		socketmode.OptionDebug(false),
@@ -149,9 +172,11 @@ func Start(initialChannel string) *app {
 		botApi:         botApi,
 		MsgChan:        msgChan,
 		currentChannel: initialChannelID,
+		userCache:      make(map[string]string),
 	}
 
 	socketmodeHandler.HandleEvents(slackevents.Message, func(evt *socketmode.Event, client *socketmode.Client) {
+		log.Println("WEBSOCKET: Received a slack message")
 		a.messageHandler(evt, client)
 	})
 
@@ -161,10 +186,29 @@ func Start(initialChannel string) *app {
 }
 
 func (a app) Init() tea.Cmd {
-	return nil
+	return a.GetChannelHistory(a.currentChannel)
 }
 
 func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
+	rerenderChat := func() {
+		var chatCmds []tea.Cmd
+		var chatContent string
+
+		for _, message := range a.messages {
+			msg, cmd := a.formatMessage(message)
+			if cmd != nil {
+				chatCmds = append(chatCmds, cmd)
+			}
+			chatContent += msg + "\n\n"
+		}
+
+		a.chat.SetContent(chatContent)
+		cmds = append(cmds, tea.Batch(chatCmds...))
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -177,20 +221,33 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.focused = (a.focused + 2) % 3
 			return a, nil
 		}
-	case slackMsg:
-		var chatContent string
 
-		for _, message := range a.messages {
-			msg, err := a.formatMessage(message)
-			if err != nil {
-				continue
+	case channelSelectedMsg:
+		a.currentChannel = msg.id
+		a.messages = []message{}
+
+		cmd = a.GetChannelHistory(msg.id)
+		cmds = append(cmds, cmd)
+
+	case historyLoadedMsg:
+		a.messages = append(msg.messages, a.messages...)
+		rerenderChat()
+
+	case newSlackMessageMsg:
+		a.messages = append(a.messages, msg.message)
+		rerenderChat()
+
+	case userInfoLoadedMsg:
+		log.Println("UserInfoLoaded 1")
+		if msg.user != nil {
+			log.Println("UserInfoLoaded 2")
+			if _, ok := a.userCache[msg.user.ID]; !ok {
+				log.Println("UserInfoLoaded 3")
+				a.userCache[msg.user.ID] = msg.user.Profile.DisplayName
+				rerenderChat()
 			}
-			chatContent += msg + "\n\n"
 		}
 
-		a.chat.SetContent(chatContent)
-
-		return a, nil
 	case tea.WindowSizeMsg:
 		a.width = msg.Width - 4
 		a.height = msg.Height - 4
@@ -231,20 +288,21 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}*/
 	}
 
-	var cmd tea.Cmd
+	var focusCmd tea.Cmd
 	switch a.focused {
 	case FocusSidebar:
-		a.sidebar, cmd = a.sidebar.Update(msg)
+		a.sidebar, focusCmd = a.sidebar.Update(msg)
 		a.input.Blur()
 	case FocusChat:
-		a.chat, cmd = a.chat.Update(msg)
+		a.chat, focusCmd = a.chat.Update(msg)
 		a.input.Blur()
 	case FocusInput:
-		a.input, cmd = a.input.Update(msg)
+		a.input, focusCmd = a.input.Update(msg)
 		a.input.Focus()
 	}
+	cmds = append(cmds, focusCmd)
 
-	return a, cmd
+	return a, tea.Batch(cmds...)
 }
 
 func (a app) View() string {
@@ -260,17 +318,17 @@ func (a app) View() string {
 
 	switch a.focused {
 	case FocusSidebar:
-		sidebar = sidebarStyle.BorderForeground(lg.Color("#4318c3")).Render(a.sidebar.View())
+		sidebar = sidebarStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.sidebar.View())
 		chat = chatStyle.Render(a.chat.View())
 		input = inputStyle.Render(a.input.View())
 	case FocusChat:
 		sidebar = sidebarStyle.Render(a.sidebar.View())
-		chat = chatStyle.BorderForeground(lg.Color("#4318c3")).Render(a.chat.View())
+		chat = chatStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.chat.View())
 		input = inputStyle.Render(a.input.View())
 	case FocusInput:
 		sidebar = sidebarStyle.Render(a.sidebar.View())
 		chat = chatStyle.Render(a.chat.View())
-		input = inputStyle.BorderForeground(lg.Color("#4318c3")).Render(a.input.View())
+		input = inputStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.input.View())
 	}
 
 	s = lg.JoinHorizontal(lg.Left, sidebar, lg.JoinVertical(lg.Top, chat, input))
@@ -294,9 +352,10 @@ func initializeInput() textarea.Model {
 func initializeSidebar() sidebar {
 	l := sidebar{
 		items: []sidebarItem{
-			{"summer-of-making-bulletin-help-please-very-much"},
-			{"happenings"},
-			{"cdn"},
+			{"hackcli-was-here", "C09AHK61U8G"},
+			{"summer-of-making", "C015M4L9AHW"},
+			{"happenings", "C05B6DBN802"},
+			{"cdn", "C016DEDUL87"},
 		},
 		selectedItem: 0,
 		width:        0,
@@ -318,6 +377,12 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 			}
 		case "down":
 			s.selectedItem = (s.selectedItem + 1) % len(s.items)
+		case "enter":
+			s.openChannel = s.selectedItem
+			selected := s.items[s.selectedItem].id
+			return s, func() tea.Msg {
+				return channelSelectedMsg{selected}
+			}
 		}
 	}
 	return s, nil
@@ -329,10 +394,13 @@ func (s sidebar) View() string {
 	for index, item := range s.items {
 		var style lg.Style
 		if s.selectedItem == index {
-			style = styles.Green.Align(lg.Left).
-				Border(lg.NormalBorder(), false, false, false, true)
+			style = lg.NewStyle().Align(lg.Left).
+				Border(lg.ThickBorder(), false, false, false, true).BorderForeground(styles.Green)
 		} else {
 			style = lg.NewStyle().Align(lg.Left)
+		}
+		if s.openChannel == index {
+			style = style.Foreground(styles.Green)
 		}
 
 		if runewidth.StringWidth(item.title) <= s.width {
@@ -362,6 +430,8 @@ func (a *app) messageHandler(evt *socketmode.Event, client *socketmode.Client) {
 		return
 	}
 
+	client.Ack(*evt.Request)
+
 	ev, ok := eventsAPIEvent.InnerEvent.Data.(*slackevents.MessageEvent)
 	if !ok {
 		return
@@ -381,35 +451,99 @@ func (a *app) messageHandler(evt *socketmode.Event, client *socketmode.Client) {
 		user:     ev.User,
 		content:  ev.Text,
 	}
+	log.Printf("---FINAL WEBSOCKET--- message: %v", message)
 
-	a.messages = append(a.messages, message)
-
-	a.MsgChan <- slackMsg{}
+	a.MsgChan <- newSlackMessageMsg{message}
 }
 
-func (a *app) formatMessage(mes message) (string, error) {
-	user, err := a.botApi.GetUserInfo(mes.user)
-	if err != nil {
-		return "", err
-	}
+func (a *app) formatMessage(mes message) (string, tea.Cmd) {
+	var username string
+	var cmd tea.Cmd
 
-	username := user.Profile.DisplayName
+	if user, ok := a.userCache[mes.user]; ok {
+		log.Println("FormatMessage 1")
+		username = user + " "
+	} else {
+		log.Println("FormatMessage 2")
+		username = mes.user + " "
+		cmd = func() tea.Msg {
+			user, err := a.userApi.GetUserInfo(mes.user)
+			if err != nil {
+				log.Printf("Error fetching user: %v", err)
+				return nil
+			}
+			return userInfoLoadedMsg{user}
+		}
+	}
 
 	parts := strings.Split(mes.ts, ".")
 	sec, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return "", err
+		return "", cmd
 	}
 	nsec, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return "", err
+		return "", cmd
 	}
 	time := time.Unix(sec, nsec*1000).Format("15:04")
 	text := mes.content
 
-	styledUsername := lg.NewStyle().Bold(true).Foreground(lg.Color("#ECECEC")).Render(username)
-	styledTime := lg.NewStyle().Foreground(lg.Color("#ECECEC")).Faint(true).Render(time)
-	styledText := lg.NewStyle().Foreground(lg.Color("#DDDDDD")).Render(text)
+	styledUsername := lg.NewStyle().Foreground(lg.Color("#f3f3ffff")).Bold(true).Render(username)
+	styledTime := lg.NewStyle().Foreground(lg.Color(rune(lg.ColorProfile()))).Faint(true).Render(time)
+	styledText := lg.NewStyle().Foreground(lg.Color(rune(lg.ColorProfile()))).Render(text)
 
-	return lg.JoinVertical(lg.Top, lg.JoinHorizontal(lg.Left, styledUsername, styledTime), styledText), nil
+	return lg.JoinVertical(lg.Top, lg.JoinHorizontal(lg.Left, styledUsername, styledTime), styledText), cmd
+}
+
+func (a *app) GetChannelHistory(channelID string) tea.Cmd {
+
+	return func() tea.Msg {
+		log.Printf("HISTORY: Fetching for: %v", channelID)
+
+		params := &slack.GetConversationHistoryParameters{
+			ChannelID:          channelID,
+			Limit:              100,
+			IncludeAllMetadata: true,
+		}
+
+		history, err := a.GetHistoryWithRetry(params)
+		if err != nil {
+			log.Printf("HISTORY: Error getting initial history: %v", err)
+			return nil
+		}
+
+		var loadedMessages []message
+
+		for i := len(history.Messages) - 1; i >= 0; i-- {
+			slackMsg := history.Messages[i]
+
+			newMessage := message{
+				ts:       slackMsg.Timestamp,
+				threadId: slackMsg.ThreadTimestamp,
+				user:     slackMsg.User,
+				content:  slackMsg.Text,
+			}
+			loadedMessages = append(loadedMessages, newMessage)
+		}
+
+		log.Printf("HISTORY: loaded %d messages", len(loadedMessages))
+		return historyLoadedMsg{loadedMessages}
+	}
+}
+
+func (a *app) GetHistoryWithRetry(params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		history, err := a.userApi.GetConversationHistory(params)
+		if err != nil {
+			if rateLimitErr, ok := err.(*slack.RateLimitedError); ok {
+				retryAfter := rateLimitErr.RetryAfter
+				log.Printf("Rate limit hit on GetConversationHistory, sleeping for %d seconds...", retryAfter/1000000000)
+				time.Sleep(retryAfter)
+				continue
+			}
+			return nil, err
+		}
+		return history, nil
+	}
+	return nil, fmt.Errorf("unexpected error")
 }

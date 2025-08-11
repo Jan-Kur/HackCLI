@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	sl "github.com/Jan-Kur/HackCLI/api"
+	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,7 +41,7 @@ func InitialModel() model {
 	sp := spinner.New()
 	sp.Spinner = spinner.MiniDot
 
-	loggedIn := sl.IsLoggedIn()
+	loggedIn := api.IsLoggedIn()
 
 	return model{
 		textInput:    ti,
@@ -167,8 +167,9 @@ func (m model) View() string {
 
 func openBrowser() error {
 	params := url.Values{}
-	params.Add("client_id", "9218969411171.9249336220343")
-	params.Add("user_scope", "users:read,users.profile:read,users:write,users.profile:write,channels:read,groups:read,im:read,mpim:read")
+	params.Add("client_id", "2210535565.9331116699749")
+	params.Add("scope", "channels:history,channels:read,groups:read,users:read,channels:join")
+	params.Add("user_scope", "channels:read,groups:read,users.profile:read,users.profile:write,users:read,users:write")
 	params.Add("redirect_uri", "https://hackcli-backend.vercel.app/api/callback")
 
 	oauthURL := "https://slack.com/oauth/v2/authorize?" + params.Encode()
