@@ -5,8 +5,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Jan-Kur/HackCLI/api"
@@ -36,6 +38,7 @@ type app struct {
 	MsgChan        chan tea.Msg
 	currentChannel string
 	userCache      map[string]string
+	mutex          sync.RWMutex
 }
 
 type model struct {
@@ -100,40 +103,6 @@ func Start(initialChannel string) *app {
 
 	userApi := slack.New(userToken)
 
-	authResp, err := userApi.AuthTest()
-	if err != nil {
-		panic("Error logging in")
-	}
-
-	userConvParams := &slack.GetConversationsForUserParameters{
-		UserID:          authResp.UserID,
-		Types:           []string{"public_channel", "private_channel"},
-		ExcludeArchived: true,
-		Limit:           200,
-	}
-	var userChannels []slack.Channel
-	for {
-		channels, cursor, err := userApi.GetConversationsForUser(userConvParams)
-		if err != nil {
-			panic(fmt.Sprintf("Error getting channels: %v", err))
-		}
-		userChannels = append(userChannels, channels...)
-		if cursor == "" {
-			break
-		}
-		userConvParams.Cursor = cursor
-	}
-
-	initialChannel = strings.TrimPrefix(initialChannel, "#")
-
-	var initialChannelID string
-	for _, ch := range userChannels {
-		if ch.Name == initialChannel {
-			initialChannelID = ch.ID
-			break
-		}
-	}
-
 	appToken := os.Getenv("SLACK_APP_TOKEN")
 	if appToken == "" {
 		panic("SLACK_APP_TOKEN must be set\n")
@@ -153,7 +122,7 @@ func Start(initialChannel string) *app {
 	)
 	socketmodeHandler := socketmode.NewSocketmodeHandler(socketClient)
 
-	l := initializeSidebar()
+	l, initialChannelID := initializeSidebar(userApi, botApi, initialChannel)
 
 	v := initializeChat()
 
@@ -176,7 +145,7 @@ func Start(initialChannel string) *app {
 	}
 
 	socketmodeHandler.HandleEvents(slackevents.Message, func(evt *socketmode.Event, client *socketmode.Client) {
-		log.Println("WEBSOCKET: Received a slack message")
+		client.Ack(*evt.Request)
 		a.messageHandler(evt, client)
 	})
 
@@ -185,13 +154,33 @@ func Start(initialChannel string) *app {
 	return a
 }
 
-func (a app) Init() tea.Cmd {
+func (a *app) Init() tea.Cmd {
 	return a.GetChannelHistory(a.currentChannel)
 }
 
-func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
+
+	insertMessage := func(newMessage message) {
+		idx, exists := slices.BinarySearchFunc(a.messages, newMessage, func(a, b message) int {
+			if a.ts > b.ts {
+				return 1
+			}
+			if a.ts < b.ts {
+				return -1
+			}
+			return 0
+		})
+
+		if exists {
+			return
+		}
+
+		a.messages = append(a.messages, message{})
+		copy(a.messages[idx+1:], a.messages[idx:])
+		a.messages[idx] = newMessage
+	}
 
 	rerenderChat := func() {
 		var chatCmds []tea.Cmd
@@ -224,28 +213,43 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case channelSelectedMsg:
 		a.currentChannel = msg.id
+		log.Printf("currentChannel changed to: %v", msg.id)
 		a.messages = []message{}
-
 		cmd = a.GetChannelHistory(msg.id)
 		cmds = append(cmds, cmd)
 
 	case historyLoadedMsg:
 		a.messages = append(msg.messages, a.messages...)
+		slices.SortFunc(a.messages, func(a, b message) int {
+			if a.ts > b.ts {
+				return 1
+			}
+			if a.ts < b.ts {
+				return -1
+			}
+			return 0
+		})
 		rerenderChat()
+		a.chat.GotoBottom()
 
 	case newSlackMessageMsg:
-		a.messages = append(a.messages, msg.message)
+		insertMessage(msg.message)
 		rerenderChat()
+		a.chat.GotoBottom()
 
 	case userInfoLoadedMsg:
-		log.Println("UserInfoLoaded 1")
 		if msg.user != nil {
-			log.Println("UserInfoLoaded 2")
-			if _, ok := a.userCache[msg.user.ID]; !ok {
-				log.Println("UserInfoLoaded 3")
-				a.userCache[msg.user.ID] = msg.user.Profile.DisplayName
-				rerenderChat()
+
+			displayName := msg.user.Profile.DisplayName
+			if displayName == "" {
+				displayName = msg.user.Profile.FirstName
 			}
+
+			a.mutex.Lock()
+			a.userCache[msg.user.ID] = displayName
+			a.mutex.Unlock()
+
+			rerenderChat()
 		}
 
 	case tea.WindowSizeMsg:
@@ -297,6 +301,30 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.chat, focusCmd = a.chat.Update(msg)
 		a.input.Blur()
 	case FocusInput:
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "enter" {
+			content := a.input.Value()
+			if strings.TrimSpace(content) != "" {
+				a.input.Reset()
+				go func() {
+					for range 2 {
+						_, _, _, err := a.userApi.SendMessage(a.currentChannel, slack.MsgOptionText(content, false))
+						if err != nil {
+							if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
+								retryAfter := rateLimitError.RetryAfter
+								log.Printf("Rate limit hit on SendMessage, sleeping for %d seconds...", retryAfter/1000000000)
+								time.Sleep(retryAfter)
+								continue
+							} else {
+								panic(fmt.Sprintf("Error sending message: %v", err))
+							}
+						}
+						break
+					}
+				}()
+				return a, nil
+			}
+		}
+
 		a.input, focusCmd = a.input.Update(msg)
 		a.input.Focus()
 	}
@@ -305,7 +333,7 @@ func (a app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(cmds...)
 }
 
-func (a app) View() string {
+func (a *app) View() string {
 	var s string
 
 	sidebarStyle := lg.NewStyle().Border(lg.RoundedBorder(), true)
@@ -349,20 +377,100 @@ func initializeInput() textarea.Model {
 	return t
 }
 
-func initializeSidebar() sidebar {
+func initializeSidebar(userApi, botApi *slack.Client, initialChannel string) (sidebar, string) {
+	userConvParams := &slack.GetConversationsForUserParameters{
+		Types:           []string{"public_channel", "private_channel"},
+		ExcludeArchived: true,
+		Limit:           150,
+	}
+	userChannelsMap := make(map[string]string)
+	for {
+		channels, cursor, err := userApi.GetConversationsForUser(userConvParams)
+		if err != nil {
+			panic(fmt.Sprintf("Error getting userChannels: %v", err))
+		}
+		for _, ch := range channels {
+			userChannelsMap[ch.ID] = ch.Name
+		}
+		if cursor == "" {
+			break
+		}
+		userConvParams.Cursor = cursor
+	}
+
+	botConvParams := &slack.GetConversationsForUserParameters{
+		Types:           []string{"public_channel", "private_channel"},
+		ExcludeArchived: true,
+		Limit:           150,
+	}
+	var botChannels []slack.Channel
+	for {
+		channels, cursor, err := botApi.GetConversationsForUser(botConvParams)
+		if err != nil {
+			panic(fmt.Sprintf("Error getting botChannels: %v", err))
+		}
+		botChannels = append(botChannels, channels...)
+		if cursor == "" {
+			break
+		}
+		botConvParams.Cursor = cursor
+	}
+
+	var finalChannels []sidebarItem
+
+	for _, ch := range botChannels {
+		if name, ok := userChannelsMap[ch.ID]; ok {
+			finalChannels = append(finalChannels, sidebarItem{id: ch.ID, title: name})
+		}
+	}
+
+	slices.SortFunc(finalChannels, func(a, b sidebarItem) int {
+		if a.title < b.title {
+			return -1
+		}
+		if a.title > b.title {
+			return 1
+		}
+		return 0
+	})
+
+	initialChannel = strings.TrimPrefix(initialChannel, "#")
+
+	var initialChannelID string
+	for id, name := range userChannelsMap {
+		if name == initialChannel {
+			initialChannelID = id
+			break
+		}
+	}
+
+	if initialChannelID == "" {
+		if len(finalChannels) > 0 {
+			initialChannelID = finalChannels[0].id
+		} else {
+			panic("NO CHANNELS, ABORT")
+		}
+	}
+	var selectedItem int
+
+	if initialChannelID != "" {
+		for index, ch := range finalChannels {
+			if ch.id == initialChannelID {
+				selectedItem = index
+				break
+			}
+		}
+	}
+
 	l := sidebar{
-		items: []sidebarItem{
-			{"hackcli-was-here", "C09AHK61U8G"},
-			{"summer-of-making", "C015M4L9AHW"},
-			{"happenings", "C05B6DBN802"},
-			{"cdn", "C016DEDUL87"},
-		},
-		selectedItem: 0,
+		items:        finalChannels,
+		selectedItem: selectedItem,
+		openChannel:  selectedItem,
 		width:        0,
 		height:       0,
 	}
 
-	return l
+	return l, initialChannelID
 }
 
 func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
@@ -378,10 +486,12 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 		case "down":
 			s.selectedItem = (s.selectedItem + 1) % len(s.items)
 		case "enter":
-			s.openChannel = s.selectedItem
-			selected := s.items[s.selectedItem].id
-			return s, func() tea.Msg {
-				return channelSelectedMsg{selected}
+			if s.openChannel != s.selectedItem {
+				s.openChannel = s.selectedItem
+				selected := s.items[s.selectedItem].id
+				return s, func() tea.Msg {
+					return channelSelectedMsg{selected}
+				}
 			}
 		}
 	}
@@ -430,8 +540,6 @@ func (a *app) messageHandler(evt *socketmode.Event, client *socketmode.Client) {
 		return
 	}
 
-	client.Ack(*evt.Request)
-
 	ev, ok := eventsAPIEvent.InnerEvent.Data.(*slackevents.MessageEvent)
 	if !ok {
 		return
@@ -451,7 +559,8 @@ func (a *app) messageHandler(evt *socketmode.Event, client *socketmode.Client) {
 		user:     ev.User,
 		content:  ev.Text,
 	}
-	log.Printf("---FINAL WEBSOCKET--- message: %v", message)
+
+	log.Printf("%v | %v", message.ts, message.content)
 
 	a.MsgChan <- newSlackMessageMsg{message}
 }
@@ -460,19 +569,43 @@ func (a *app) formatMessage(mes message) (string, tea.Cmd) {
 	var username string
 	var cmd tea.Cmd
 
-	if user, ok := a.userCache[mes.user]; ok {
-		log.Println("FormatMessage 1")
+	a.mutex.RLock()
+	user, ok := a.userCache[mes.user]
+	a.mutex.RUnlock()
+
+	if ok {
 		username = user + " "
 	} else {
-		log.Println("FormatMessage 2")
-		username = mes.user + " "
-		cmd = func() tea.Msg {
-			user, err := a.userApi.GetUserInfo(mes.user)
-			if err != nil {
-				log.Printf("Error fetching user: %v", err)
-				return nil
+		username = "... "
+
+		a.mutex.Lock()
+		if _, ok := a.userCache[mes.user]; !ok {
+			a.userCache[mes.user] = "... "
+			a.mutex.Unlock()
+
+			cmd = func() tea.Msg {
+				var user *slack.User
+				var err error
+
+				for range 2 {
+					user, err = a.userApi.GetUserInfo(mes.user)
+					if err != nil {
+						if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
+							retryAfter := rateLimitError.RetryAfter
+							log.Printf("Rate limit hit on GetUserInfo, sleeping for %d seconds...", retryAfter/1000000000)
+							time.Sleep(retryAfter)
+							continue
+						}
+						log.Printf("Error fetching user: %v", err)
+						return nil
+					}
+					break
+				}
+				log.Printf("Fetched user: %v", user.Profile.DisplayName)
+				return userInfoLoadedMsg{user}
 			}
-			return userInfoLoadedMsg{user}
+		} else {
+			a.mutex.Unlock()
 		}
 	}
 
@@ -490,9 +623,17 @@ func (a *app) formatMessage(mes message) (string, tea.Cmd) {
 
 	styledUsername := lg.NewStyle().Foreground(lg.Color("#f3f3ffff")).Bold(true).Render(username)
 	styledTime := lg.NewStyle().Foreground(lg.Color(rune(lg.ColorProfile()))).Faint(true).Render(time)
-	styledText := lg.NewStyle().Foreground(lg.Color(rune(lg.ColorProfile()))).Render(text)
+	styledText := lg.NewStyle().Foreground(lg.Color(rune(lg.ColorProfile()))).Width(a.chatWidth - 2).Render(text)
 
-	return lg.JoinVertical(lg.Top, lg.JoinHorizontal(lg.Left, styledUsername, styledTime), styledText), cmd
+	newMessage := lg.JoinVertical(lg.Top, lg.JoinHorizontal(lg.Left, styledUsername, styledTime), styledText)
+
+	lines := strings.Split(newMessage, "\n")
+	for i, line := range lines {
+		lines[i] = " " + line + " "
+	}
+	paddedMessage := strings.Join(lines, "\n")
+
+	return paddedMessage, cmd
 }
 
 func (a *app) GetChannelHistory(channelID string) tea.Cmd {
@@ -532,7 +673,7 @@ func (a *app) GetChannelHistory(channelID string) tea.Cmd {
 }
 
 func (a *app) GetHistoryWithRetry(params *slack.GetConversationHistoryParameters) (*slack.GetConversationHistoryResponse, error) {
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		history, err := a.userApi.GetConversationHistory(params)
 		if err != nil {
 			if rateLimitErr, ok := err.(*slack.RateLimitedError); ok {
