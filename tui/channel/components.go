@@ -14,6 +14,14 @@ import (
 	"github.com/slack-go/slack"
 )
 
+type FocusState int
+
+const (
+	FocusSidebar FocusState = iota
+	FocusChat
+	FocusInput
+)
+
 func initializeChat() viewport.Model {
 	v := viewport.New(0, 0)
 	v.MouseWheelEnabled = true

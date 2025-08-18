@@ -7,7 +7,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 )
 
-func (a *app) messageAddHandler(evt *socketmode.Event, client *socketmode.Client) {
+func (a *app) messageHandler(evt *socketmode.Event, client *socketmode.Client) {
 	eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 	if !ok {
 		return
@@ -20,15 +20,23 @@ func (a *app) messageAddHandler(evt *socketmode.Event, client *socketmode.Client
 		return
 	}
 
-	if ev.SubType != "" {
-		return
-	}
-
 	if ev.ChannelType != "channel" && ev.ChannelType != "group" {
 		return
 	}
 
 	if a.currentChannel != ev.Channel {
+		return
+	}
+
+	if ev.SubType == "message_deleted" {
+		a.MsgChan <- deletedMessageMsg{ev.DeletedTimeStamp}
+		return
+
+	} else if ev.SubType == "message_changed" {
+		a.MsgChan <- editedMessageMsg{ev.Message.Timestamp, ev.Message.Text}
+		return
+
+	} else if ev.SubType != "" {
 		return
 	}
 
@@ -43,7 +51,7 @@ func (a *app) messageAddHandler(evt *socketmode.Event, client *socketmode.Client
 
 	log.Printf("%v | %v", message.ts, message.content)
 
-	a.MsgChan <- newSlackMessageMsg{message}
+	a.MsgChan <- newMessageMsg{message}
 }
 
 func (a *app) reactionAddHandler(evt *socketmode.Event, client *socketmode.Client) {
@@ -67,5 +75,28 @@ func (a *app) reactionAddHandler(evt *socketmode.Event, client *socketmode.Clien
 		messageTs: ev.Item.Timestamp,
 		reaction:  ev.Reaction,
 		user:      ev.User,
+	}
+}
+
+func (a *app) reactionRemoveHandler(evt *socketmode.Event, client *socketmode.Client) {
+	eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
+	if !ok {
+		return
+	}
+
+	client.Ack(*evt.Request)
+
+	ev, ok := eventsAPIEvent.InnerEvent.Data.(*slackevents.ReactionRemovedEvent)
+	if !ok {
+		return
+	}
+
+	if a.currentChannel != ev.Item.Channel {
+		return
+	}
+
+	a.MsgChan <- reactionRemovedMsg{
+		messageTs: ev.Item.Timestamp,
+		reaction:  ev.Reaction,
 	}
 }
