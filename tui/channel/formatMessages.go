@@ -7,34 +7,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Jan-Kur/HackCLI/core"
 	"github.com/Jan-Kur/HackCLI/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 	"github.com/slack-go/slack"
 )
 
-func (a *app) formatMessage(mes message) (string, tea.Cmd) {
+func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 
-	if mes.threadId != "" && mes.ts != mes.threadId {
-		var parent message
-		for i, m := range a.messages {
-			if m.ts == mes.threadId {
-				parent = a.messages[i]
+	if mes.ThreadId != "" && mes.Ts != mes.ThreadId {
+		var parent core.Message
+		for i, m := range a.chat.messages {
+			if m.Ts == mes.ThreadId {
+				parent = a.chat.messages[i]
 				break
 			}
 		}
-		if parent.isCollapsed {
+		if parent.IsCollapsed {
 			return "", nil
 		}
 	}
 
-	username, userCmd := a.getUser(mes.user)
+	username, userCmd := a.getUser(mes.User)
 	var cmds []tea.Cmd
 	if userCmd != nil {
 		cmds = append(cmds, userCmd)
 	}
 
-	parts := strings.Split(mes.ts, ".")
+	parts := strings.Split(mes.Ts, ".")
 	sec, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		return "", tea.Batch(cmds...)
@@ -44,14 +45,14 @@ func (a *app) formatMessage(mes message) (string, tea.Cmd) {
 		return "", tea.Batch(cmds...)
 	}
 	timestamp := time.Unix(sec, nsec*1000).Format("15:04")
-	text := mes.content
+	text := mes.Content
 
 	selectedBorder := lg.Style{}
-	if mes.ts == a.messages[a.selectedMessage].ts {
+	if mes.Ts == a.chat.messages[a.chat.selectedMessage].Ts {
 		selectedBorder = lg.NewStyle().Border(lg.ThickBorder(), false, false, false, true).BorderForeground(styles.Green)
 	}
 	var emojis []string
-	for emo, quantity := range mes.reactions {
+	for emo, quantity := range mes.Reactions {
 		emoji := lg.NewStyle().Border(lg.RoundedBorder(), true).
 			BorderForeground(styles.Green).Render(":" + emo + ":" + " " + strconv.Itoa(quantity))
 		emojis = append(emojis, emoji)
@@ -63,25 +64,25 @@ func (a *app) formatMessage(mes message) (string, tea.Cmd) {
 
 	contentBlock := lg.JoinVertical(lg.Top, lg.JoinHorizontal(lg.Left, styledUsername, styledTime), styledText)
 	if len(emojis) > 0 {
-		styledEmojis := lg.NewStyle().Margin(0, 1).MaxWidth(a.chatWidth - 4).Render(lg.JoinHorizontal(0, emojis...))
+		styledEmojis := lg.NewStyle().Margin(0, 1).MaxWidth(a.chat.chatWidth - 4).Render(lg.JoinHorizontal(0, emojis...))
 
 		contentBlock = lg.JoinVertical(lg.Top, contentBlock, styledEmojis)
 	}
 
-	if mes.threadId != "" && mes.ts != mes.threadId {
-		return selectedBorder.Render(lg.NewStyle().Margin(0, 1, 0, 3).Width(a.chatWidth - 4).
+	if mes.ThreadId != "" && mes.Ts != mes.ThreadId {
+		return selectedBorder.Render(lg.NewStyle().Margin(0, 1, 0, 3).Width(a.chat.chatWidth - 4).
 			Render(lg.NewStyle().Border(lg.ThickBorder(), false, false, false, true).
 				BorderForeground(styles.Green).Render(contentBlock))), tea.Batch(cmds...)
 	}
 
-	if mes.isCollapsed && mes.threadId == mes.ts {
+	if mes.IsCollapsed && mes.ThreadId == mes.Ts {
 		var replyUsers []string
 		var replyCount int
-		for _, reply := range a.messages {
-			if reply.threadId == mes.ts && reply.ts != mes.ts {
+		for _, reply := range a.chat.messages {
+			if reply.ThreadId == mes.Ts && reply.Ts != mes.Ts {
 				replyCount++
 				if len(replyUsers) < 3 {
-					replyUser, replyCmd := a.getUser(reply.user)
+					replyUser, replyCmd := a.getUser(reply.User)
 					if replyCmd != nil {
 						cmds = append(cmds, replyCmd)
 					}
@@ -96,31 +97,31 @@ func (a *app) formatMessage(mes message) (string, tea.Cmd) {
 	}
 
 	return selectedBorder.Render(lg.NewStyle().
-		Margin(0, 1).Width(a.chatWidth - 2).Render(contentBlock)), tea.Batch(cmds...)
+		Margin(0, 1).Width(a.chat.chatWidth - 2).Render(contentBlock)), tea.Batch(cmds...)
 }
 
 func (a *app) getUser(userID string) (string, tea.Cmd) {
-	a.mutex.RLock()
-	user, ok := a.userCache[userID]
-	a.mutex.RUnlock()
+	a.Mutex.RLock()
+	user, ok := a.UserCache[userID]
+	a.Mutex.RUnlock()
 	if ok {
 		return user + " ", nil
 	}
 
-	a.mutex.Lock()
-	if _, ok := a.userCache[userID]; ok {
-		a.mutex.Unlock()
+	a.Mutex.Lock()
+	if _, ok := a.UserCache[userID]; ok {
+		a.Mutex.Unlock()
 		return a.getUser(userID)
 	}
-	a.userCache[userID] = "..."
-	a.mutex.Unlock()
+	a.UserCache[userID] = "..."
+	a.Mutex.Unlock()
 
 	cmd := func() tea.Msg {
 		var fetchedUser *slack.User
 		var err error
 
 		for range 2 {
-			fetchedUser, err = a.userApi.GetUserInfo(userID)
+			fetchedUser, err = a.UserApi.GetUserInfo(userID)
 			if err != nil {
 				if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
 					retryAfter := rateLimitError.RetryAfter
@@ -139,7 +140,7 @@ func (a *app) getUser(userID string) (string, tea.Cmd) {
 		}
 
 		log.Printf("Fetched user: %v", fetchedUser.Profile.DisplayName)
-		return userInfoLoadedMsg{fetchedUser}
+		return core.UserInfoLoadedMsg{User: fetchedUser}
 	}
 
 	return "... ", cmd

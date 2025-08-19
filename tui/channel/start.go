@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/Jan-Kur/HackCLI/api"
+	"github.com/Jan-Kur/HackCLI/core"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
@@ -56,15 +57,19 @@ func Start(initialChannel string) *app {
 	a := &app{
 		model: model{
 			sidebar: l,
-			chat:    v,
+			chat: chat{
+				viewport: v,
+			},
 			input:   t,
 			focused: FocusInput,
 		},
-		userApi:        userApi,
-		botApi:         botApi,
-		MsgChan:        msgChan,
-		currentChannel: initialChannelID,
-		userCache:      make(map[string]string),
+		App: core.App{
+			UserApi:        userApi,
+			BotApi:         botApi,
+			MsgChan:        msgChan,
+			CurrentChannel: initialChannelID,
+			UserCache:      make(map[string]string),
+		},
 	}
 
 	socketmodeHandler.HandleEvents(slackevents.Message, func(evt *socketmode.Event, client *socketmode.Client) {

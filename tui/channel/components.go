@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Jan-Kur/HackCLI/core"
 	"github.com/Jan-Kur/HackCLI/styles"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -14,13 +15,25 @@ import (
 	"github.com/slack-go/slack"
 )
 
-type FocusState int
+type sidebar struct {
+	items        []sidebarItem
+	selectedItem int
+	openChannel  int
+	width        int
+	height       int
+}
 
-const (
-	FocusSidebar FocusState = iota
-	FocusChat
-	FocusInput
-)
+type chat struct {
+	viewport              viewport.Model
+	messages              []core.Message
+	selectedMessage       int
+	chatWidth, chatHeight int
+}
+
+type sidebarItem struct {
+	title string
+	id    string
+}
 
 func initializeChat() viewport.Model {
 	v := viewport.New(0, 0)
@@ -149,7 +162,7 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 				s.openChannel = s.selectedItem
 				selected := s.items[s.selectedItem].id
 				return s, func() tea.Msg {
-					return channelSelectedMsg{selected}
+					return core.ChannelSelectedMsg{Id: selected}
 				}
 			}
 		}
