@@ -49,51 +49,29 @@ func initializeInput() textarea.Model {
 	return t
 }
 
-func initializeSidebar(userApi, botApi *slack.Client, initialChannel string) (sidebar, string) {
+func initializeSidebar(api *slack.Client, initialChannel string) (sidebar, string) {
 	userConvParams := &slack.GetConversationsForUserParameters{
 		Types:           []string{"public_channel", "private_channel"},
 		ExcludeArchived: true,
 		Limit:           150,
 	}
-	userChannelsMap := make(map[string]string)
+	var userChannels []slack.Channel
 	for {
-		channels, cursor, err := userApi.GetConversationsForUser(userConvParams)
+		channels, cursor, err := api.GetConversationsForUser(userConvParams)
 		if err != nil {
 			panic(fmt.Sprintf("Error getting userChannels: %v", err))
 		}
-		for _, ch := range channels {
-			userChannelsMap[ch.ID] = ch.Name
-		}
+		userChannels = append(userChannels, channels...)
 		if cursor == "" {
 			break
 		}
 		userConvParams.Cursor = cursor
 	}
 
-	botConvParams := &slack.GetConversationsForUserParameters{
-		Types:           []string{"public_channel", "private_channel"},
-		ExcludeArchived: true,
-		Limit:           150,
-	}
-	var botChannels []slack.Channel
-	for {
-		channels, cursor, err := botApi.GetConversationsForUser(botConvParams)
-		if err != nil {
-			panic(fmt.Sprintf("Error getting botChannels: %v", err))
-		}
-		botChannels = append(botChannels, channels...)
-		if cursor == "" {
-			break
-		}
-		botConvParams.Cursor = cursor
-	}
-
 	var finalChannels []sidebarItem
 
-	for _, ch := range botChannels {
-		if name, ok := userChannelsMap[ch.ID]; ok {
-			finalChannels = append(finalChannels, sidebarItem{id: ch.ID, title: name})
-		}
+	for _, ch := range userChannels {
+		finalChannels = append(finalChannels, sidebarItem{id: ch.ID, title: ch.Name})
 	}
 
 	slices.SortFunc(finalChannels, func(a, b sidebarItem) int {
@@ -109,9 +87,9 @@ func initializeSidebar(userApi, botApi *slack.Client, initialChannel string) (si
 	initialChannel = strings.TrimPrefix(initialChannel, "#")
 
 	var initialChannelID string
-	for id, name := range userChannelsMap {
-		if name == initialChannel {
-			initialChannelID = id
+	for _, ch := range userChannels {
+		if ch.Name == initialChannel {
+			initialChannelID = ch.ID
 			break
 		}
 	}

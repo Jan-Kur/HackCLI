@@ -1,16 +1,15 @@
 package channel
 
 import (
-	"io"
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
+	"github.com/Jan-Kur/HackCLI/utils"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/slackevents"
-	"github.com/slack-go/slack/socketmode"
 )
 
 func Start(initialChannel string) *app {
@@ -20,33 +19,20 @@ func Start(initialChannel string) *app {
 	}
 	log.SetOutput(f)
 
-	userToken, err := api.GetToken()
-	if err != nil {
-		panic("Error getting token")
+	token := os.Getenv("SLACK_XOXC_TOKEN")
+	if token == "" {
+		panic("SLACK_XOXC_TOKEN must be set\n")
 	}
 
-	userApi := slack.New(userToken)
-
-	appToken := os.Getenv("SLACK_APP_TOKEN")
-	if appToken == "" {
-		panic("SLACK_APP_TOKEN must be set\n")
+	cookie := os.Getenv("SLACK_COOKIE")
+	if cookie == "" {
+		panic("SLACK_COOKIES must be set")
 	}
 
-	botToken := os.Getenv("SLACK_BOT_TOKEN")
-	if botToken == "" {
-		panic("SLACK_BOT_TOKEN must be set\n")
-	}
+	httpCl := utils.NewCookieHTTP("https://slack.com", utils.ConvertCookies([]http.Cookie{{Name: "d", Value: cookie}}))
+	client := slack.New(token, slack.OptionHTTPClient(httpCl))
 
-	botApi := slack.New(botToken, slack.OptionAppLevelToken(appToken))
-
-	socketClient := socketmode.New(
-		botApi,
-		socketmode.OptionDebug(false),
-		socketmode.OptionLog(log.New(io.Discard, "", 0)),
-	)
-	socketmodeHandler := socketmode.NewSocketmodeHandler(socketClient)
-
-	l, initialChannelID := initializeSidebar(userApi, botApi, initialChannel)
+	l, initialChannelID := initializeSidebar(client, initialChannel)
 
 	v := initializeChat()
 
@@ -64,27 +50,14 @@ func Start(initialChannel string) *app {
 			focused: FocusInput,
 		},
 		App: core.App{
-			UserApi:        userApi,
-			BotApi:         botApi,
+			Api:            client,
 			MsgChan:        msgChan,
 			CurrentChannel: initialChannelID,
 			UserCache:      make(map[string]string),
 		},
 	}
 
-	socketmodeHandler.HandleEvents(slackevents.Message, func(evt *socketmode.Event, client *socketmode.Client) {
-		a.messageHandler(evt, client)
-	})
-
-	socketmodeHandler.HandleEvents(slackevents.ReactionAdded, func(evt *socketmode.Event, client *socketmode.Client) {
-		a.reactionAddHandler(evt, client)
-	})
-
-	socketmodeHandler.HandleEvents(slackevents.ReactionRemoved, func(evt *socketmode.Event, client *socketmode.Client) {
-		a.reactionRemoveHandler(evt, client)
-	})
-
-	go socketmodeHandler.RunEventLoop()
+	go api.RunWebsocket(token, cookie, a.MsgChan)
 
 	return a
 }

@@ -8,8 +8,7 @@ import (
 )
 
 type App struct {
-	UserApi        *slack.Client
-	BotApi         *slack.Client
+	Api            *slack.Client
 	MsgChan        chan tea.Msg
 	CurrentChannel string
 	UserCache      map[string]string
@@ -23,6 +22,11 @@ type Message struct {
 	Content     string
 	IsCollapsed bool
 	Reactions   map[string]int
+}
+
+type Reaction struct {
+	Emoji string
+	Count int
 }
 
 type ChannelSelectedMsg struct {
@@ -63,4 +67,8 @@ type ReactionRemovedMsg struct {
 
 type GetUserMsg struct {
 	UserID string
+}
+
+type HandleEventMsg struct {
+	Event any
 }

@@ -53,7 +53,7 @@ const (
 )
 
 func (a *app) Init() tea.Cmd {
-	return api.GetChannelHistory(a.UserApi, a.CurrentChannel)
+	return api.GetChannelHistory(a.Api, a.CurrentChannel)
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -73,37 +73,32 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case core.ChannelSelectedMsg:
 		a.CurrentChannel = msg.Id
-		log.Printf("currentChannel changed to: %v", msg.Id)
 		a.chat.messages = []core.Message{}
-		cmd = api.GetChannelHistory(a.UserApi, msg.Id)
+		cmd = api.GetChannelHistory(a.Api, msg.Id)
 		cmds = append(cmds, cmd)
 
 	case core.HistoryLoadedMsg:
 		a.chat.messages = append(msg.Messages, a.chat.messages...)
 		slices.SortFunc(a.chat.messages, sortingMessagesAlgorithm)
-		a.chat.selectedMessage = len(a.chat.messages) - 1
-		if !a.isVisible(a.chat.messages[a.chat.selectedMessage]) {
-			for i := len(a.chat.messages) - 2; i >= 0; i-- {
-				if !a.isVisible(a.chat.messages[i]) {
-					continue
-				} else {
-					a.chat.selectedMessage = i
-					break
-				}
-
-			}
-		}
+		a.chat.selectedMessage = a.lastVisibleMessage()
 		a.rerenderChat(&cmds)
 		a.chat.viewport.GotoBottom()
 
 	case core.NewMessageMsg:
+		goToBottom := false
+		previouslastMessage := a.lastVisibleMessage()
 		if a.chat.viewport.AtBottom() {
 			a.insertMessage(msg.Message)
-			a.rerenderChat(&cmds)
-			a.chat.viewport.GotoBottom()
+			goToBottom = true
 		} else {
 			a.insertMessage(msg.Message)
-			a.rerenderChat(&cmds)
+		}
+		if a.chat.selectedMessage == previouslastMessage {
+			a.chat.selectedMessage = a.lastVisibleMessage()
+		}
+		a.rerenderChat(&cmds)
+		if goToBottom {
+			a.chat.viewport.GotoBottom()
 		}
 	case core.EditedMessageMsg:
 		for i, m := range a.chat.messages {
@@ -150,7 +145,23 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			a.rerenderChat(&cmds)
 		}
+	case core.HandleEventMsg:
+		switch ev := msg.Event.(type) {
+		case *api.MessageEvent:
+			if ev.Channel == a.CurrentChannel {
+				api.MessageHandler(a.MsgChan, ev)
+			}
 
+		case *api.ReactionAddedEvent:
+			if ev.Item.Channel == a.CurrentChannel {
+				api.ReactionAddHandler(a.MsgChan, ev)
+			}
+
+		case *api.ReactionRemovedEvent:
+			if ev.Item.Channel == a.CurrentChannel {
+				api.ReactionRemoveHandler(a.MsgChan, ev)
+			}
+		}
 	case tea.WindowSizeMsg:
 		a.width = msg.Width - borderPadding
 		a.height = msg.Height - borderPadding
@@ -192,7 +203,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.input.Reset()
 				go func() {
 					for range 2 {
-						_, _, _, err := a.UserApi.SendMessage(a.CurrentChannel, slack.MsgOptionText(content, false))
+						_, _, _, err := a.Api.SendMessage(a.CurrentChannel, slack.MsgOptionText(content, false))
 						if err != nil {
 							if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
 								retryAfter := rateLimitError.RetryAfter

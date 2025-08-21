@@ -3,6 +3,7 @@ package channel
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -47,15 +48,27 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 	timestamp := time.Unix(sec, nsec*1000).Format("15:04")
 	text := mes.Content
 
+	reactionsSlice := make([]core.Reaction, 0, len(mes.Reactions))
+	for emoji, count := range mes.Reactions {
+		reactionsSlice = append(reactionsSlice, core.Reaction{Emoji: emoji, Count: count})
+	}
+	sort.SliceStable(reactionsSlice, func(a, b int) bool {
+		if reactionsSlice[a].Count == reactionsSlice[b].Count {
+			return reactionsSlice[a].Emoji < reactionsSlice[b].Emoji
+		}
+		return reactionsSlice[a].Count > reactionsSlice[b].Count
+	})
+
+	var emojis []string
+	for _, reaction := range reactionsSlice {
+		emoji := lg.NewStyle().Border(lg.RoundedBorder(), true).
+			BorderForeground(styles.Green).Render(":" + reaction.Emoji + ":" + " " + strconv.Itoa(reaction.Count))
+		emojis = append(emojis, emoji)
+	}
+
 	selectedBorder := lg.Style{}
 	if mes.Ts == a.chat.messages[a.chat.selectedMessage].Ts {
 		selectedBorder = lg.NewStyle().Border(lg.ThickBorder(), false, false, false, true).BorderForeground(styles.Green)
-	}
-	var emojis []string
-	for emo, quantity := range mes.Reactions {
-		emoji := lg.NewStyle().Border(lg.RoundedBorder(), true).
-			BorderForeground(styles.Green).Render(":" + emo + ":" + " " + strconv.Itoa(quantity))
-		emojis = append(emojis, emoji)
 	}
 
 	styledUsername := lg.NewStyle().Foreground(styles.Green).Bold(true).Render(username)
@@ -121,7 +134,7 @@ func (a *app) getUser(userID string) (string, tea.Cmd) {
 		var err error
 
 		for range 2 {
-			fetchedUser, err = a.UserApi.GetUserInfo(userID)
+			fetchedUser, err = a.Api.GetUserInfo(userID)
 			if err != nil {
 				if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
 					retryAfter := rateLimitError.RetryAfter

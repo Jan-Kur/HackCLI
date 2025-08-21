@@ -9,6 +9,24 @@ import (
 	lg "github.com/charmbracelet/lipgloss"
 )
 
+func (a *app) lastVisibleMessage() int {
+	var lastMessage int
+	if !a.isVisible(a.chat.messages[len(a.chat.messages)-1]) {
+		for i := len(a.chat.messages) - 2; i >= 0; i-- {
+			if !a.isVisible(a.chat.messages[i]) {
+				continue
+			} else {
+				lastMessage = i
+				break
+			}
+
+		}
+	} else {
+		lastMessage = len(a.chat.messages) - 1
+	}
+	return lastMessage
+}
+
 func (a *app) findNextVisibleMessage(currentIndex int, goingDown bool) int {
 	if goingDown {
 		for i := currentIndex + 1; i < len(a.chat.messages); i++ {
