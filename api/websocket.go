@@ -32,7 +32,7 @@ func RunWebsocket(token, cookie string, msgChan chan tea.Msg) {
 	if err != nil {
 		panic("Failed to connect to websocket")
 	}
-	log.Println("CONNECTED TO WEBSOCKET")
+
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error { conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
 
@@ -90,6 +90,7 @@ func MessageHandler(msgChan chan tea.Msg, ev *MessageEvent) {
 		Content:     ev.Text,
 		Reactions:   make(map[string]int),
 		IsCollapsed: true,
+		IsReply:     ev.ThreadTimestamp != "" && ev.Timestamp != ev.ThreadTimestamp,
 	}
 
 	log.Printf("%v | %v", message.Ts, message.Content)

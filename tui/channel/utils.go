@@ -11,6 +11,9 @@ import (
 
 func (a *app) lastVisibleMessage() int {
 	var lastMessage int
+	if len(a.chat.messages) <= 0 {
+		return -1
+	}
 	if !a.isVisible(a.chat.messages[len(a.chat.messages)-1]) {
 		for i := len(a.chat.messages) - 2; i >= 0; i-- {
 			if !a.isVisible(a.chat.messages[i]) {
@@ -45,7 +48,7 @@ func (a *app) findNextVisibleMessage(currentIndex int, goingDown bool) int {
 }
 
 func (a *app) isVisible(mes core.Message) bool {
-	if mes.ThreadId != "" && mes.Ts != mes.ThreadId {
+	if mes.IsReply {
 		for _, m := range a.chat.messages {
 			if m.Ts == mes.ThreadId {
 				if m.IsCollapsed {
@@ -98,13 +101,16 @@ func (a *app) chatKeybinds(key string, cmds *[]tea.Cmd) bool {
 			a.rerenderChat(cmds)
 		}
 	case "enter":
-		a.chat.messages[a.chat.selectedMessage].IsCollapsed = !a.chat.messages[a.chat.selectedMessage].IsCollapsed
-		if a.chat.messages[a.chat.selectedMessage].IsCollapsed {
-			a.chat.viewport.ScrollDown(1)
-		} else {
-			a.chat.viewport.ScrollUp(1)
+		mes := &a.chat.messages[a.chat.selectedMessage]
+		if mes.Ts == mes.ThreadId {
+			mes.IsCollapsed = !mes.IsCollapsed
+			if mes.IsCollapsed {
+				a.chat.viewport.ScrollDown(1)
+			} else {
+				a.chat.viewport.ScrollUp(1)
+			}
+			a.rerenderChat(cmds)
 		}
-		a.rerenderChat(cmds)
 	default:
 		return false
 	}

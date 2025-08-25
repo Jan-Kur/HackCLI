@@ -2,22 +2,21 @@ package channel
 
 import (
 	"fmt"
-	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
-	"github.com/Jan-Kur/HackCLI/styles"
+	"github.com/Jan-Kur/HackCLI/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/slack-go/slack"
 )
 
 func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 
-	if mes.ThreadId != "" && mes.Ts != mes.ThreadId {
+	if mes.IsReply {
 		var parent core.Message
 		for i, m := range a.chat.messages {
 			if m.Ts == mes.ThreadId {
@@ -82,7 +81,7 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 		contentBlock = lg.JoinVertical(lg.Top, contentBlock, styledEmojis)
 	}
 
-	if mes.ThreadId != "" && mes.Ts != mes.ThreadId {
+	if mes.IsReply {
 		return selectedBorder.Render(lg.NewStyle().Margin(0, 1, 0, 3).Width(a.chat.chatWidth - 4).
 			Render(lg.NewStyle().Border(lg.ThickBorder(), false, false, false, true).
 				BorderForeground(styles.Green).Render(contentBlock))), tea.Batch(cmds...)
@@ -129,32 +128,7 @@ func (a *app) getUser(userID string) (string, tea.Cmd) {
 	a.UserCache[userID] = "..."
 	a.Mutex.Unlock()
 
-	cmd := func() tea.Msg {
-		var fetchedUser *slack.User
-		var err error
-
-		for range 2 {
-			fetchedUser, err = a.Api.GetUserInfo(userID)
-			if err != nil {
-				if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
-					retryAfter := rateLimitError.RetryAfter
-					log.Printf("Rate limit hit on GetUserInfo for %s, sleeping for %d seconds...", userID, retryAfter/1000000000)
-					time.Sleep(retryAfter)
-					continue
-				}
-				log.Printf("Error fetching user %s: %v", userID, err)
-				return nil
-			}
-			break
-		}
-		if fetchedUser == nil {
-			log.Printf("Failed to fetch user %s after retries.", userID)
-			return nil
-		}
-
-		log.Printf("Fetched user: %v", fetchedUser.Profile.DisplayName)
-		return core.UserInfoLoadedMsg{User: fetchedUser}
-	}
+	cmd := api.GetUserInfo(a.Client, userID)
 
 	return "... ", cmd
 }

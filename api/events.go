@@ -1,6 +1,6 @@
 package api
 
-var EventMapping = map[string]interface{}{
+var EventMapping = map[string]any{
 	"message":          MessageEvent{},
 	"reaction_added":   ReactionAddedEvent{},
 	"reaction_removed": ReactionRemovedEvent{},

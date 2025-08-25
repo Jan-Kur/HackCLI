@@ -8,7 +8,7 @@ import (
 )
 
 type App struct {
-	Api            *slack.Client
+	Client         *slack.Client
 	MsgChan        chan tea.Msg
 	CurrentChannel string
 	UserCache      map[string]string
@@ -22,6 +22,7 @@ type Message struct {
 	Content     string
 	IsCollapsed bool
 	Reactions   map[string]int
+	IsReply     bool
 }
 
 type Reaction struct {
@@ -71,4 +72,10 @@ type GetUserMsg struct {
 
 type HandleEventMsg struct {
 	Event any
+}
+
+type AddDmMsg struct {
+	ChannelID string
+	UserID    string
+	HasMsg    bool
 }

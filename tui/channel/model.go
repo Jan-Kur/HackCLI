@@ -1,19 +1,15 @@
 package channel
 
 import (
-	"fmt"
-	"log"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
-	"github.com/Jan-Kur/HackCLI/styles"
+	"github.com/Jan-Kur/HackCLI/tui/styles"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/slack-go/slack"
 )
 
 type FocusState int
@@ -53,7 +49,7 @@ const (
 )
 
 func (a *app) Init() tea.Cmd {
-	return api.GetChannelHistory(a.Api, a.CurrentChannel)
+	return tea.Batch(api.GetChannelHistory(a.Client, a.CurrentChannel))
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -74,7 +70,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case core.ChannelSelectedMsg:
 		a.CurrentChannel = msg.Id
 		a.chat.messages = []core.Message{}
-		cmd = api.GetChannelHistory(a.Api, msg.Id)
+		cmd = api.GetChannelHistory(a.Client, a.CurrentChannel)
 		cmds = append(cmds, cmd)
 
 	case core.HistoryLoadedMsg:
@@ -82,24 +78,29 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		slices.SortFunc(a.chat.messages, sortingMessagesAlgorithm)
 		a.chat.selectedMessage = a.lastVisibleMessage()
 		a.rerenderChat(&cmds)
-		a.chat.viewport.GotoBottom()
+		if a.chat.viewport.Height > 0 {
+			a.chat.viewport.GotoBottom()
+		}
 
 	case core.NewMessageMsg:
 		goToBottom := false
 		previouslastMessage := a.lastVisibleMessage()
-		if a.chat.viewport.AtBottom() {
-			a.insertMessage(msg.Message)
-			goToBottom = true
-		} else {
-			a.insertMessage(msg.Message)
+		if previouslastMessage != -1 {
+			if a.chat.viewport.AtBottom() {
+				a.insertMessage(msg.Message)
+				goToBottom = true
+			} else {
+				a.insertMessage(msg.Message)
+			}
+			if a.chat.selectedMessage == previouslastMessage {
+				a.chat.selectedMessage = a.lastVisibleMessage()
+			}
+			a.rerenderChat(&cmds)
+			if goToBottom {
+				a.chat.viewport.GotoBottom()
+			}
 		}
-		if a.chat.selectedMessage == previouslastMessage {
-			a.chat.selectedMessage = a.lastVisibleMessage()
-		}
-		a.rerenderChat(&cmds)
-		if goToBottom {
-			a.chat.viewport.GotoBottom()
-		}
+
 	case core.EditedMessageMsg:
 		for i, m := range a.chat.messages {
 			if m.Ts == msg.Ts {
@@ -162,6 +163,20 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				api.ReactionRemoveHandler(a.MsgChan, ev)
 			}
 		}
+	case core.AddDmMsg:
+		if msg.HasMsg {
+			user, err := a.Client.GetUserInfo(msg.UserID)
+			if err != nil {
+				return a, nil
+			}
+			username := user.Profile.DisplayName
+			if username == "" {
+				username = user.RealName
+			}
+			a.sidebar.items = append(a.sidebar.items, sidebarItem{id: msg.ChannelID, title: username})
+			a.sidebar.rerenderSidebar()
+			return a, nil
+		}
 	case tea.WindowSizeMsg:
 		a.width = msg.Width - borderPadding
 		a.height = msg.Height - borderPadding
@@ -172,7 +187,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.chat.chatHeight = a.height - a.inputHeight
 
 		a.sidebar.SetWidth(a.sidebarWidth)
-		a.sidebar.SetHeight(a.height)
+		a.sidebar.SetHeight(a.height + (borderPadding / 2))
 
 		a.chat.viewport.Width = a.chat.chatWidth
 		a.chat.viewport.Height = a.chat.chatHeight
@@ -197,27 +212,15 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.chat.viewport, focusCmd = a.chat.viewport.Update(msg)
 		a.input.Blur()
 	case FocusInput:
-		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "enter" {
-			content := a.input.Value()
-			if strings.TrimSpace(content) != "" {
-				a.input.Reset()
-				go func() {
-					for range 2 {
-						_, _, _, err := a.Api.SendMessage(a.CurrentChannel, slack.MsgOptionText(content, false))
-						if err != nil {
-							if rateLimitError, ok := err.(*slack.RateLimitedError); ok {
-								retryAfter := rateLimitError.RetryAfter
-								log.Printf("Rate limit hit on SendMessage, sleeping for %d seconds...", retryAfter/1000000000)
-								time.Sleep(retryAfter)
-								continue
-							} else {
-								panic(fmt.Sprintf("Error sending message: %v", err))
-							}
-						}
-						break
-					}
-				}()
-				return a, nil
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "alt+enter":
+				content := a.input.Value()
+				if strings.TrimSpace(content) != "" {
+					a.input.Reset()
+					go api.SendMessage(a.Client, a.CurrentChannel, content)
+					return a, nil
+				}
 			}
 		}
 

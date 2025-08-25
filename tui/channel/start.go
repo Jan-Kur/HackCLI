@@ -32,8 +32,6 @@ func Start(initialChannel string) *app {
 	httpCl := utils.NewCookieHTTP("https://slack.com", utils.ConvertCookies([]http.Cookie{{Name: "d", Value: cookie}}))
 	client := slack.New(token, slack.OptionHTTPClient(httpCl))
 
-	l, initialChannelID := initializeSidebar(client, initialChannel)
-
 	v := initializeChat()
 
 	t := initializeInput()
@@ -42,7 +40,6 @@ func Start(initialChannel string) *app {
 
 	a := &app{
 		model: model{
-			sidebar: l,
 			chat: chat{
 				viewport: v,
 			},
@@ -50,12 +47,16 @@ func Start(initialChannel string) *app {
 			focused: FocusInput,
 		},
 		App: core.App{
-			Api:            client,
-			MsgChan:        msgChan,
-			CurrentChannel: initialChannelID,
-			UserCache:      make(map[string]string),
+			Client:    client,
+			MsgChan:   msgChan,
+			UserCache: make(map[string]string),
 		},
 	}
+
+	l, initialChannelID := a.initializeSidebar(client, initialChannel)
+
+	a.sidebar = l
+	a.CurrentChannel = initialChannelID
 
 	go api.RunWebsocket(token, cookie, a.MsgChan)
 
