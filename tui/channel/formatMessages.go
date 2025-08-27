@@ -29,10 +29,17 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 		}
 	}
 
-	username, userCmd := a.getUser(mes.User)
+	username := a.getUser(mes.User)
+
 	var cmds []tea.Cmd
-	if userCmd != nil {
-		cmds = append(cmds, userCmd)
+	if username == "... " {
+		cmds = append(cmds, func() tea.Msg {
+			user, err := api.GetUserInfo(a.Client, mes.User)
+			if err != nil {
+				return nil
+			}
+			return core.UserInfoLoadedMsg{User: user}
+		})
 	}
 
 	parts := strings.Split(mes.Ts, ".")
@@ -47,38 +54,57 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 	timestamp := time.Unix(sec, nsec*1000).Format("15:04")
 	text := mes.Content
 
-	reactionsSlice := make([]core.Reaction, 0, len(mes.Reactions))
-	for emoji, count := range mes.Reactions {
-		reactionsSlice = append(reactionsSlice, core.Reaction{Emoji: emoji, Count: count})
+	type reactionItem struct {
+		emoji string
+		count int
+	}
+
+	reactionsSlice := make([]reactionItem, 0, len(mes.Reactions))
+	for emoji, reaction := range mes.Reactions {
+		reactionsSlice = append(reactionsSlice, reactionItem{emoji: emoji, count: len(reaction)})
 	}
 	sort.SliceStable(reactionsSlice, func(a, b int) bool {
-		if reactionsSlice[a].Count == reactionsSlice[b].Count {
-			return reactionsSlice[a].Emoji < reactionsSlice[b].Emoji
+		if reactionsSlice[a].count == reactionsSlice[b].count {
+			return reactionsSlice[a].emoji < reactionsSlice[b].emoji
 		}
-		return reactionsSlice[a].Count > reactionsSlice[b].Count
+		return reactionsSlice[a].count > reactionsSlice[b].count
 	})
 
 	var emojis []string
 	for _, reaction := range reactionsSlice {
 		emoji := lg.NewStyle().Border(lg.RoundedBorder(), true).
-			BorderForeground(styles.Green).Render(":" + reaction.Emoji + ":" + " " + strconv.Itoa(reaction.Count))
+			BorderForeground(styles.Green).Render(":" + reaction.emoji + ":" + " " + strconv.Itoa(reaction.count))
 		emojis = append(emojis, emoji)
+	}
+
+	var links []string
+	for _, f := range mes.Files {
+		if f.URLPrivate != "" {
+			links = append(links, lg.NewStyle().Foreground(styles.Green).Render(f.URLPrivate))
+		}
 	}
 
 	selectedBorder := lg.Style{}
 	if mes.Ts == a.chat.messages[a.chat.selectedMessage].Ts {
-		selectedBorder = lg.NewStyle().Border(lg.ThickBorder(), false, false, false, true).BorderForeground(styles.Green)
+		selectedBorder = lg.NewStyle().Border(lg.ThickBorder(), false, false, false, true).
+			BorderForeground(styles.Green)
 	}
 
 	styledUsername := lg.NewStyle().Foreground(styles.Green).Bold(true).Render(username)
 	styledTime := lg.NewStyle().Faint(true).Render(timestamp)
 	styledText := lg.NewStyle().Render(text)
 
-	contentBlock := lg.JoinVertical(lg.Top, lg.JoinHorizontal(lg.Left, styledUsername, styledTime), styledText)
+	contentBlock := lg.JoinHorizontal(lg.Left, styledUsername, styledTime)
+	if text != "" {
+		contentBlock = lg.JoinVertical(lg.Top, contentBlock, styledText)
+	}
 	if len(emojis) > 0 {
 		styledEmojis := lg.NewStyle().Margin(0, 1).MaxWidth(a.chat.chatWidth - 4).Render(lg.JoinHorizontal(0, emojis...))
 
 		contentBlock = lg.JoinVertical(lg.Top, contentBlock, styledEmojis)
+	}
+	if len(links) > 0 {
+		contentBlock = lg.JoinVertical(lg.Top, contentBlock, lg.JoinVertical(lg.Left, links...))
 	}
 
 	if mes.IsReply {
@@ -94,9 +120,15 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 			if reply.ThreadId == mes.Ts && reply.Ts != mes.Ts {
 				replyCount++
 				if len(replyUsers) < 3 {
-					replyUser, replyCmd := a.getUser(reply.User)
-					if replyCmd != nil {
-						cmds = append(cmds, replyCmd)
+					replyUser := a.getUser(reply.User)
+					if replyUser == "... " {
+						cmds = append(cmds, func() tea.Msg {
+							user, err := api.GetUserInfo(a.Client, mes.User)
+							if err != nil {
+								return nil
+							}
+							return core.UserInfoLoadedMsg{User: user}
+						})
 					}
 					replyUsers = append(replyUsers, replyUser)
 				}
@@ -112,12 +144,12 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 		Margin(0, 1).Width(a.chat.chatWidth - 2).Render(contentBlock)), tea.Batch(cmds...)
 }
 
-func (a *app) getUser(userID string) (string, tea.Cmd) {
+func (a *app) getUser(userID string) string {
 	a.Mutex.RLock()
 	user, ok := a.UserCache[userID]
 	a.Mutex.RUnlock()
 	if ok {
-		return user + " ", nil
+		return user + " "
 	}
 
 	a.Mutex.Lock()
@@ -128,7 +160,5 @@ func (a *app) getUser(userID string) (string, tea.Cmd) {
 	a.UserCache[userID] = "..."
 	a.Mutex.Unlock()
 
-	cmd := api.GetUserInfo(a.Client, userID)
-
-	return "... ", cmd
+	return "... "
 }

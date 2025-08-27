@@ -1,6 +1,8 @@
 module github.com/Jan-Kur/HackCLI
 
-go 1.24.1
+go 1.24.2
+
+toolchain go1.24.6
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
@@ -10,6 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
+	github.com/rmhubbert/bubbletea-overlay v0.4.0
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/net v0.43.0
@@ -18,9 +21,9 @@ require (
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
+	github.com/charmbracelet/colorprofile v0.3.1 // indirect
 	github.com/charmbracelet/x/ansi v0.9.3 // indirect
-	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

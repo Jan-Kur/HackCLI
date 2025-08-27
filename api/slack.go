@@ -69,9 +69,17 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 		for i := len(history.Messages) - 1; i >= 0; i-- {
 			slackMsg := history.Messages[i]
 
-			reactions := make(map[string]int)
+			reactions := make(map[string][]string)
 			for _, reaction := range slackMsg.Reactions {
-				reactions[reaction.Name] = reaction.Count
+				reactions[reaction.Name] = reaction.Users
+			}
+
+			var files []core.File
+			for _, file := range slackMsg.Files {
+				files = append(files, core.File{
+					Permalink:  file.Permalink,
+					URLPrivate: file.URLPrivate,
+				})
 			}
 
 			loadedMessages = append(loadedMessages, core.Message{
@@ -79,6 +87,7 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 				ThreadId:    slackMsg.ThreadTimestamp,
 				User:        slackMsg.User,
 				Content:     slackMsg.Text,
+				Files:       files,
 				Reactions:   reactions,
 				IsCollapsed: true,
 				IsReply:     false,
@@ -111,15 +120,25 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 					if j == 0 {
 						continue
 					}
-					reactions := make(map[string]int)
+					reactions := make(map[string][]string)
 					for _, reaction := range mes.Reactions {
-						reactions[reaction.Name] = reaction.Count
+						reactions[reaction.Name] = reaction.Users
 					}
+
+					var files []core.File
+					for _, file := range mes.Files {
+						files = append(files, core.File{
+							Permalink:  file.Permalink,
+							URLPrivate: file.URLPrivate,
+						})
+					}
+
 					loadedMessages = append(loadedMessages, core.Message{
 						Ts:          mes.Timestamp,
 						ThreadId:    mes.ThreadTimestamp,
 						User:        mes.User,
 						Content:     mes.Text,
+						Files:       files,
 						Reactions:   reactions,
 						IsCollapsed: true,
 						IsReply:     true,
@@ -132,22 +151,20 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 	}
 }
 
-func GetUserInfo(api *slack.Client, userID string) tea.Cmd {
-	return func() tea.Msg {
-		var fetchedUser *slack.User
-		var err error
+func GetUserInfo(api *slack.Client, userID string) (*slack.User, error) {
+	var fetchedUser *slack.User
+	var err error
 
-		WithRetry(func() error {
-			fetchedUser, err = api.GetUserInfo(userID)
-			return err
-		})
+	WithRetry(func() error {
+		fetchedUser, err = api.GetUserInfo(userID)
+		return err
+	})
 
-		if err != nil {
-			return nil
-		}
-
-		return core.UserInfoLoadedMsg{User: fetchedUser}
+	if err != nil {
+		return nil, nil
 	}
+
+	return fetchedUser, nil
 }
 
 func SendMessage(api *slack.Client, currentChannel string, content string) {
@@ -162,17 +179,14 @@ func SendMessage(api *slack.Client, currentChannel string, content string) {
 	}
 }
 
-func CheckDmHasMessages(api *slack.Client, channelID, userID string, msgChan chan tea.Msg) {
-	go func() {
-		params := &slack.GetConversationHistoryParameters{
-			ChannelID:          channelID,
-			Limit:              1,
-			IncludeAllMetadata: false,
-		}
-		history, err := api.GetConversationHistory(params)
-		if err != nil {
-			return
-		}
-		msgChan <- core.AddDmMsg{ChannelID: channelID, UserID: userID, HasMsg: len(history.Messages) > 0}
-	}()
+func DmHasMessages(api *slack.Client, dmID string) (bool, error) {
+	history, err := api.GetConversationHistory(&slack.GetConversationHistoryParameters{
+		ChannelID:          dmID,
+		Limit:              1,
+		IncludeAllMetadata: false,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(history.Messages) > 0, nil
 }

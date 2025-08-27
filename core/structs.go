@@ -8,6 +8,7 @@ import (
 )
 
 type App struct {
+	User           string
 	Client         *slack.Client
 	MsgChan        chan tea.Msg
 	CurrentChannel string
@@ -20,14 +21,33 @@ type Message struct {
 	ThreadId    string
 	User        string
 	Content     string
+	Attachments []Attachment
+	Files       []File
 	IsCollapsed bool
-	Reactions   map[string]int
+	Reactions   map[string][]string
 	IsReply     bool
 }
 
 type Reaction struct {
-	Emoji string
+	Users []string
 	Count int
+}
+
+type Channel struct {
+	Name string
+	ID   string
+}
+
+type Attachment struct {
+	ImageURL    string `json:"image_url,omitempty"`
+	ThumbURL    string `json:"thumb_url,omitempty"`
+	FromURL     string `json:"from_url,omitempty"`
+	OriginalURL string `json:"original_url,omitempty"`
+}
+
+type File struct {
+	URLPrivate string `json:"url_private,omitempty"`
+	Permalink  string `json:"permalink,omitempty"`
 }
 
 type ChannelSelectedMsg struct {
@@ -74,8 +94,10 @@ type HandleEventMsg struct {
 	Event any
 }
 
-type AddDmMsg struct {
-	ChannelID string
-	UserID    string
-	HasMsg    bool
+type DMsLoadedMsg struct {
+	DMs []Channel
+}
+
+type ReactionScrollMsg struct {
+	Added bool
 }

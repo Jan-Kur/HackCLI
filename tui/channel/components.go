@@ -9,6 +9,7 @@ import (
 	"github.com/Jan-Kur/HackCLI/core"
 	"github.com/Jan-Kur/HackCLI/tui/styles"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -38,6 +39,14 @@ type sidebarItem struct {
 	isHeader bool
 }
 
+func initializePopup() textinput.Model {
+	t := textinput.New()
+	t.Placeholder = "Enter an emoji eg. heavysob..."
+	t.Width = 50
+
+	return t
+}
+
 func initializeChat() viewport.Model {
 	v := viewport.New(0, 0)
 	v.MouseWheelEnabled = true
@@ -52,7 +61,7 @@ func initializeInput() textarea.Model {
 	return t
 }
 
-func (a *app) initializeSidebar(client *slack.Client, initialChannel string) (sidebar, string) {
+func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 	var items []sidebarItem
 
 	userChannelParams := &slack.GetConversationsForUserParameters{
@@ -63,7 +72,7 @@ func (a *app) initializeSidebar(client *slack.Client, initialChannel string) (si
 
 	userChannels, err := api.Paginate(func(cursor string) ([]slack.Channel, string, error) {
 		userChannelParams.Cursor = cursor
-		return client.GetConversationsForUser(userChannelParams)
+		return a.Client.GetConversationsForUser(userChannelParams)
 	})
 	if err != nil {
 		panic(fmt.Sprintf("Error getting userChannels: %v", err))
@@ -73,14 +82,6 @@ func (a *app) initializeSidebar(client *slack.Client, initialChannel string) (si
 		Types:           []string{"im"},
 		ExcludeArchived: true,
 		Limit:           100,
-	}
-
-	directConvs, err := api.Paginate(func(cursor string) ([]slack.Channel, string, error) {
-		directConvParams.Cursor = cursor
-		return client.GetConversationsForUser(directConvParams)
-	})
-	if err != nil {
-		panic(fmt.Sprintf("Error getting DMs: %v", err))
 	}
 
 	items = append([]sidebarItem{{title: "CHANNELS", id: "", isHeader: true}}, items...)
@@ -100,21 +101,47 @@ func (a *app) initializeSidebar(client *slack.Client, initialChannel string) (si
 	}
 
 	items = append(items, sidebarItem{title: "", id: "", isHeader: true},
-		sidebarItem{title: "DMs", id: "", isHeader: true})
+		sidebarItem{title: "DMs", id: "", isHeader: true},
+		sidebarItem{title: "Loading...", id: "", isHeader: true})
 
-	slices.SortFunc(directConvs, func(a, b slack.Channel) int {
-		if a.Name < b.Name {
-			return -1
+	go func() {
+		directConvs, err := api.Paginate(func(cursor string) ([]slack.Channel, string, error) {
+			directConvParams.Cursor = cursor
+			return a.Client.GetConversationsForUser(directConvParams)
+		})
+		if err != nil {
+			panic(fmt.Sprintf("Error getting DMs: %v", err))
 		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
-	})
 
-	for _, dm := range directConvs {
-		api.CheckDmHasMessages(client, dm.ID, dm.User, a.MsgChan)
-	}
+		var dmsWithMessages []core.Channel
+
+		for _, dm := range directConvs {
+			hasMessages, err := api.DmHasMessages(a.Client, dm.ID)
+			if err != nil || !hasMessages {
+				continue
+			}
+
+			username := a.getUser(dm.User)
+			if username == "... " {
+				user, err := api.GetUserInfo(a.Client, dm.User)
+				if err != nil {
+					continue
+				}
+				if user.Profile.DisplayName == "" {
+					username = user.RealName
+				} else {
+					username = user.Profile.DisplayName
+				}
+			}
+			dmsWithMessages = append(dmsWithMessages, core.Channel{Name: username, ID: dm.ID})
+		}
+
+		slices.SortFunc(dmsWithMessages, func(a, b core.Channel) int {
+			return strings.Compare(a.Name, b.Name)
+		})
+
+		a.MsgChan <- core.DMsLoadedMsg{DMs: dmsWithMessages}
+	}()
 
 	initialChannel = strings.TrimPrefix(initialChannel, "#")
 
@@ -211,6 +238,10 @@ func (s sidebar) View() string {
 			style = style.Faint(true).Underline(true)
 		}
 
+		if item.title == "Loading..." {
+			style = style.UnsetUnderline()
+		}
+
 		if s.selectedItem == absoluteIndex {
 			style = style.Align(lg.Left).
 				Border(lg.ThickBorder(), false, false, false, true).BorderForeground(styles.Green)
@@ -263,4 +294,29 @@ func (s *sidebar) nextSelectableItem(next int) int {
 
 func (s *sidebar) rerenderSidebar() {
 	s.View()
+}
+
+type background struct {
+	view string
+}
+
+func (m background) Init() tea.Cmd                           { return nil }
+func (m background) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
+func (m background) View() string                            { return m.view }
+
+type reactionPopup struct {
+	input *textinput.Model
+}
+
+func (m reactionPopup) Init() tea.Cmd                           { return nil }
+func (m reactionPopup) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
+func (m reactionPopup) View() string {
+	box := lg.NewStyle().
+		Border(lg.RoundedBorder(), true).
+		BorderForeground(lg.Color(styles.StrGreen)).
+		Padding(0, 1)
+	help := lg.NewStyle().Faint(true).Render("Enter to add, Esc to cancel")
+
+	body := lg.JoinVertical(lg.Left, m.input.View(), help)
+	return box.Render(body)
 }

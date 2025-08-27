@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"log"
 	"slices"
 	"strings"
 
@@ -8,8 +9,11 @@ import (
 	"github.com/Jan-Kur/HackCLI/core"
 	"github.com/Jan-Kur/HackCLI/tui/styles"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	overlay "github.com/rmhubbert/bubbletea-overlay"
+	"github.com/slack-go/slack"
 )
 
 type FocusState int
@@ -20,6 +24,11 @@ const (
 	FocusInput
 )
 
+type app struct {
+	core.App
+	model
+}
+
 type model struct {
 	sidebar                   sidebar
 	chat                      chat
@@ -27,17 +36,30 @@ type model struct {
 	focused                   FocusState
 	width, height             int
 	sidebarWidth, inputHeight int
+	popup                     popup
 }
 
-type app struct {
-	core.App
-	model
+type popup struct {
+	overlay   *overlay.Model
+	input     textinput.Model
+	isVisible bool
 }
 
 var (
 	sidebarStyle = lg.NewStyle().Border(lg.RoundedBorder(), true)
 
-	chatStyle = lg.NewStyle().Border(lg.RoundedBorder(), true)
+	chatStyle = styles.BoxWithLabel{
+		BoxStyle: lg.NewStyle().
+			Border(lg.RoundedBorder()),
+		LabelStyle: lg.NewStyle().Bold(true),
+	}
+
+	focusedChatStyle = styles.BoxWithLabel{
+		BoxStyle: lg.NewStyle().
+			Border(lg.RoundedBorder()).
+			BorderForeground(lg.Color(styles.StrGreen)),
+		LabelStyle: lg.NewStyle().Bold(true),
+	}
 
 	inputStyle = lg.NewStyle().Border(lg.RoundedBorder(), true)
 )
@@ -58,6 +80,45 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if a.popup.isVisible {
+			switch msg.String() {
+			case "esc":
+				a.popup.isVisible = false
+				a.popup.input.Blur()
+				return a, nil
+			case "enter":
+				mes := a.chat.messages[a.chat.selectedMessage]
+				content := a.popup.input.Value()
+				if users, ok := mes.Reactions[content]; ok && slices.Contains(users, a.User) {
+					go func() {
+						err := a.Client.RemoveReaction(content, slack.ItemRef{
+							Channel:   a.CurrentChannel,
+							Timestamp: mes.Ts,
+						})
+						if err == nil {
+							a.MsgChan <- core.ReactionScrollMsg{Added: false}
+						}
+					}()
+				} else {
+					go func() {
+						err := a.Client.AddReaction(content, slack.ItemRef{
+							Channel:   a.CurrentChannel,
+							Timestamp: mes.Ts,
+						})
+						if err == nil {
+							a.MsgChan <- core.ReactionScrollMsg{Added: true}
+						}
+					}()
+				}
+				a.popup.input.Reset()
+				a.popup.isVisible = false
+				return a, nil
+			default:
+				a.popup.input, cmd = a.popup.input.Update(msg)
+				return a, cmd
+			}
+		}
+
 		switch msg.String() {
 		case "esc":
 			return a, tea.Quit
@@ -116,10 +177,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
+		a.rerenderChat(&cmds)
 	case core.ReactionAddedMsg:
 		for i, mes := range a.chat.messages {
 			if mes.Ts == msg.MessageTs {
-				a.chat.messages[i].Reactions[msg.Reaction] += 1
+				reaction := a.chat.messages[i].Reactions[msg.Reaction]
+				reaction = append(reaction, msg.User)
+				a.chat.messages[i].Reactions[msg.Reaction] = reaction
 				break
 			}
 		}
@@ -163,19 +227,24 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				api.ReactionRemoveHandler(a.MsgChan, ev)
 			}
 		}
-	case core.AddDmMsg:
-		if msg.HasMsg {
-			user, err := a.Client.GetUserInfo(msg.UserID)
-			if err != nil {
-				return a, nil
-			}
-			username := user.Profile.DisplayName
-			if username == "" {
-				username = user.RealName
-			}
-			a.sidebar.items = append(a.sidebar.items, sidebarItem{id: msg.ChannelID, title: username})
-			a.sidebar.rerenderSidebar()
-			return a, nil
+	case core.DMsLoadedMsg:
+		var dmItems []sidebarItem
+		for _, dm := range msg.DMs {
+			dmItems = append(dmItems, sidebarItem{title: dm.Name, id: dm.ID, isHeader: false})
+		}
+		i := len(a.sidebar.items) - 1
+		a.sidebar.items = append(a.sidebar.items[:i], a.sidebar.items[i+1:]...)
+
+		a.sidebar.items = append(a.sidebar.items, dmItems...)
+		a.sidebar.rerenderSidebar()
+		return a, nil
+
+	case core.ReactionScrollMsg:
+		log.Printf("Handling message")
+		if msg.Added {
+			a.chat.viewport.ScrollDown(3)
+		} else {
+			a.chat.viewport.ScrollUp(3)
 		}
 	case tea.WindowSizeMsg:
 		a.width = msg.Width - borderPadding
@@ -240,19 +309,25 @@ func (a *app) View() string {
 	switch a.focused {
 	case FocusSidebar:
 		sidebar = sidebarStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.sidebar.View())
-		chat = chatStyle.Render(a.chat.viewport.View())
+		chat = chatStyle.Render("CHAT", a.chat.viewport.View(), a.chat.chatWidth)
 		input = inputStyle.Render(a.input.View())
 	case FocusChat:
 		sidebar = sidebarStyle.Render(a.sidebar.View())
-		chat = chatStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.chat.viewport.View())
+		chat = focusedChatStyle.Render("CHAT", a.chat.viewport.View(), a.chat.chatWidth)
 		input = inputStyle.Render(a.input.View())
 	case FocusInput:
 		sidebar = sidebarStyle.Render(a.sidebar.View())
-		chat = chatStyle.Render(a.chat.viewport.View())
+		chat = chatStyle.Render("CHAT", a.chat.viewport.View(), a.chat.chatWidth)
 		input = inputStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.input.View())
 	}
 
 	s = lg.JoinHorizontal(lg.Left, sidebar, lg.JoinVertical(lg.Top, chat, input))
+
+	if a.popup.isVisible {
+		bg := background{view: s}
+		fg := reactionPopup{input: &a.popup.input}
+		return overlay.New(fg, bg, overlay.Center, overlay.Center, 0, 0).View()
+	}
 
 	return s
 }

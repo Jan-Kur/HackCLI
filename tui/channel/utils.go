@@ -66,57 +66,6 @@ func (a *app) getMessageHeight(mes core.Message) int {
 	return strings.Count(formattedMsg, "\n") + 1
 }
 
-func (a *app) chatKeybinds(key string, cmds *[]tea.Cmd) bool {
-	switch key {
-	case "up":
-		prevVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, false)
-		if prevVisibleIndex != -1 {
-			currentMessage := a.chat.messages[a.chat.selectedMessage]
-			lines := a.getMessageHeight(currentMessage) + 1
-
-			a.chat.selectedMessage = prevVisibleIndex
-			a.chat.viewport.ScrollUp(lines)
-			a.rerenderChat(cmds)
-		}
-	case "down":
-		nextVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, true)
-		if nextVisibleIndex != -1 {
-			a.chat.selectedMessage = nextVisibleIndex
-			destinationMessage := a.chat.messages[a.chat.selectedMessage]
-			lines := a.getMessageHeight(destinationMessage) + 1
-
-			a.chat.viewport.ScrollDown(lines)
-			a.rerenderChat(cmds)
-		}
-	case "j":
-		prevVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, false)
-		if prevVisibleIndex != -1 {
-			a.chat.selectedMessage = prevVisibleIndex
-			a.rerenderChat(cmds)
-		}
-	case "k":
-		nextVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, true)
-		if nextVisibleIndex != -1 {
-			a.chat.selectedMessage = nextVisibleIndex
-			a.rerenderChat(cmds)
-		}
-	case "enter":
-		mes := &a.chat.messages[a.chat.selectedMessage]
-		if mes.Ts == mes.ThreadId {
-			mes.IsCollapsed = !mes.IsCollapsed
-			if mes.IsCollapsed {
-				a.chat.viewport.ScrollDown(1)
-			} else {
-				a.chat.viewport.ScrollUp(1)
-			}
-			a.rerenderChat(cmds)
-		}
-	default:
-		return false
-	}
-	return true
-}
-
 func sortingMessagesAlgorithm(a, b core.Message) int {
 	aSortTs := a.Ts
 	if a.ThreadId != "" && a.Ts != a.ThreadId {
@@ -185,4 +134,58 @@ func (a *app) insertMessage(newMessage core.Message) {
 	a.chat.messages = append(a.chat.messages, core.Message{})
 	copy(a.chat.messages[idx+1:], a.chat.messages[idx:])
 	a.chat.messages[idx] = newMessage
+}
+
+func (a *app) chatKeybinds(key string, cmds *[]tea.Cmd) bool {
+	switch key {
+	case "up":
+		prevVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, false)
+		if prevVisibleIndex != -1 {
+			currentMessage := a.chat.messages[a.chat.selectedMessage]
+			lines := a.getMessageHeight(currentMessage) + 1
+
+			a.chat.selectedMessage = prevVisibleIndex
+			a.chat.viewport.ScrollUp(lines)
+			a.rerenderChat(cmds)
+		}
+	case "down":
+		nextVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, true)
+		if nextVisibleIndex != -1 {
+			a.chat.selectedMessage = nextVisibleIndex
+			destinationMessage := a.chat.messages[a.chat.selectedMessage]
+			lines := a.getMessageHeight(destinationMessage) + 1
+
+			a.chat.viewport.ScrollDown(lines)
+			a.rerenderChat(cmds)
+		}
+	case "j":
+		prevVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, false)
+		if prevVisibleIndex != -1 {
+			a.chat.selectedMessage = prevVisibleIndex
+			a.rerenderChat(cmds)
+		}
+	case "k":
+		nextVisibleIndex := a.findNextVisibleMessage(a.chat.selectedMessage, true)
+		if nextVisibleIndex != -1 {
+			a.chat.selectedMessage = nextVisibleIndex
+			a.rerenderChat(cmds)
+		}
+	case "enter":
+		mes := &a.chat.messages[a.chat.selectedMessage]
+		if mes.Ts == mes.ThreadId {
+			mes.IsCollapsed = !mes.IsCollapsed
+			if mes.IsCollapsed {
+				a.chat.viewport.ScrollDown(1)
+			} else {
+				a.chat.viewport.ScrollUp(1)
+			}
+			a.rerenderChat(cmds)
+		}
+	case "r":
+		a.popup.isVisible = true
+		a.popup.input.Focus()
+	default:
+		return false
+	}
+	return true
 }

@@ -83,12 +83,21 @@ func MessageHandler(msgChan chan tea.Msg, ev *MessageEvent) {
 		return
 	}
 
+	var files []core.File
+	for _, file := range ev.Files {
+		files = append(files, core.File{
+			Permalink:  file.Permalink,
+			URLPrivate: file.URLPrivate,
+		})
+	}
+
 	message := core.Message{
 		Ts:          ev.Timestamp,
 		ThreadId:    ev.ThreadTimestamp,
 		User:        ev.User,
 		Content:     ev.Text,
-		Reactions:   make(map[string]int),
+		Files:       files,
+		Reactions:   make(map[string][]string),
 		IsCollapsed: true,
 		IsReply:     ev.ThreadTimestamp != "" && ev.Timestamp != ev.ThreadTimestamp,
 	}

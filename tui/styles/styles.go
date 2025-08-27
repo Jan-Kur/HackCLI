@@ -44,21 +44,14 @@ func (b BoxWithLabel) Render(label, content string, width int) string {
 	)
 
 	borderWidth := b.BoxStyle.GetHorizontalBorderSize()
-	cellsShort := max(0, width+borderWidth-lg.Width(topLeft+topRight+renderedLabel))
-	gap := strings.Repeat(border.Top, cellsShort)
-	top := topLeft + renderedLabel + topBorderStyler(gap) + topRight
 
-	bottom := b.BoxStyle.
-		BorderTop(false).
-		Width(width).
-		Render(content)
+	cellsShort := max(0, width+borderWidth-lg.Width(topLeft+topRight+renderedLabel)-1)
+
+	gap := strings.Repeat(border.Top, cellsShort)
+
+	top := topLeft + topBorderStyler(border.Top) + renderedLabel + topBorderStyler(gap) + topRight
+
+	bottom := b.BoxStyle.BorderTop(false).Width(width).Render(content)
 
 	return top + "\n" + bottom
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

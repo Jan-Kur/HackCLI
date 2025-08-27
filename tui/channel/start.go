@@ -32,9 +32,13 @@ func Start(initialChannel string) *app {
 	httpCl := utils.NewCookieHTTP("https://slack.com", utils.ConvertCookies([]http.Cookie{{Name: "d", Value: cookie}}))
 	client := slack.New(token, slack.OptionHTTPClient(httpCl))
 
+	user, _ := client.AuthTest()
+
 	v := initializeChat()
 
 	t := initializeInput()
+
+	i := initializePopup()
 
 	msgChan := make(chan tea.Msg)
 
@@ -45,15 +49,20 @@ func Start(initialChannel string) *app {
 			},
 			input:   t,
 			focused: FocusInput,
+			popup: popup{
+				isVisible: false,
+				input:     i,
+			},
 		},
 		App: core.App{
+			User:      user.UserID,
 			Client:    client,
 			MsgChan:   msgChan,
 			UserCache: make(map[string]string),
 		},
 	}
 
-	l, initialChannelID := a.initializeSidebar(client, initialChannel)
+	l, initialChannelID := a.initializeSidebar(initialChannel)
 
 	a.sidebar = l
 	a.CurrentChannel = initialChannelID
