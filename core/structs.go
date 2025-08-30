@@ -26,6 +26,7 @@ type Message struct {
 	IsCollapsed bool
 	Reactions   map[string][]string
 	IsReply     bool
+	SubType     string
 }
 
 type Reaction struct {
@@ -34,8 +35,9 @@ type Reaction struct {
 }
 
 type Channel struct {
-	Name string
-	ID   string
+	Name   string
+	ID     string
+	UserID string
 }
 
 type Attachment struct {
@@ -69,6 +71,7 @@ type DeletedMessageMsg struct {
 
 type HistoryLoadedMsg struct {
 	Messages []Message
+	LatestTs string
 }
 
 type UserInfoLoadedMsg struct {
@@ -100,4 +103,15 @@ type DMsLoadedMsg struct {
 
 type ReactionScrollMsg struct {
 	Added bool
+}
+
+type ChannelReadMsg struct {
+	ChannelID string
+	LatestTs  string
+	LastRead  string
+}
+
+type PresenceChangedMsg struct {
+	User     string
+	Presence string
 }

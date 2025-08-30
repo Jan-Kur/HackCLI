@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -82,6 +83,13 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 				})
 			}
 
+			var botName string
+			if slackMsg.BotProfile != nil {
+				botName = slackMsg.BotProfile.Name
+			}
+
+			log.Printf("Username: %v, Name: %v, BotID: %v, BotName: %v, subtype: %v", slackMsg.Username, slackMsg.Name, slackMsg.BotID, botName, slackMsg.SubType)
+
 			loadedMessages = append(loadedMessages, core.Message{
 				Ts:          slackMsg.Timestamp,
 				ThreadId:    slackMsg.ThreadTimestamp,
@@ -133,6 +141,13 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 						})
 					}
 
+					var botName string
+					if slackMsg.BotProfile != nil {
+						botName = slackMsg.BotProfile.Name
+					}
+
+					log.Printf("Username: %v, Name: %v, BotID: %v, BotName: %v, subtype: %v", slackMsg.Username, slackMsg.Name, slackMsg.BotID, botName, slackMsg.SubType)
+
 					loadedMessages = append(loadedMessages, core.Message{
 						Ts:          mes.Timestamp,
 						ThreadId:    mes.ThreadTimestamp,
@@ -142,12 +157,17 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 						Reactions:   reactions,
 						IsCollapsed: true,
 						IsReply:     true,
+						SubType:     slackMsg.SubType,
 					})
 				}
 			}
 		}
+		var latestTs string
+		if len(history.Messages) > 0 {
+			latestTs = history.Messages[0].Timestamp
+		}
 
-		return core.HistoryLoadedMsg{Messages: loadedMessages}
+		return core.HistoryLoadedMsg{Messages: loadedMessages, LatestTs: latestTs}
 	}
 }
 
@@ -161,7 +181,8 @@ func GetUserInfo(api *slack.Client, userID string) (*slack.User, error) {
 	})
 
 	if err != nil {
-		return nil, nil
+		log.Printf("Error getting user info: %v", err)
+		return nil, err
 	}
 
 	return fetchedUser, nil
@@ -179,14 +200,19 @@ func SendMessage(api *slack.Client, currentChannel string, content string) {
 	}
 }
 
-func DmHasMessages(api *slack.Client, dmID string) (bool, error) {
+func GetLatestMessage(api *slack.Client, channelID string) (*slack.Message, error) {
 	history, err := api.GetConversationHistory(&slack.GetConversationHistoryParameters{
-		ChannelID:          dmID,
+		ChannelID:          channelID,
 		Limit:              1,
 		IncludeAllMetadata: false,
 	})
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return len(history.Messages) > 0, nil
+
+	if len(history.Messages) > 0 {
+		return &history.Messages[0], nil
+	} else {
+		return nil, fmt.Errorf("empty channel")
+	}
 }

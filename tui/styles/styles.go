@@ -7,11 +7,18 @@ import (
 )
 
 var (
-	Error       = lg.Color("#c92323")
-	Green       = lg.Color("#18c39b")
-	GreenDim    = lg.Color("#164137")
-	StrGreen    = "#18c39b"
-	StrGreenDim = "#164137"
+	Error    = lg.Color("#c92323")
+	Green    = lg.Color("#77c3a1")
+	Base     = lg.Color("#191724")
+	Overlay  = lg.Color("#26233a")
+	Contrast = lg.Color("#524f67")
+	Muted    = lg.Color("#6e6a86")
+	Subtle   = lg.Color("#b7b3d7ff")
+	Text     = lg.Color("#e0def4")
+	Pink     = lg.Color("#eb6f92")
+	Rose     = lg.Color("#ebbcba")
+	Pine     = lg.Color("#31748f")
+	Gold     = lg.Color("#f6c177")
 )
 
 type BoxWithLabel struct {

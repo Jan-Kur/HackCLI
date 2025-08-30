@@ -37,6 +37,9 @@ type model struct {
 	width, height             int
 	sidebarWidth, inputHeight int
 	popup                     popup
+	latestMarked              map[string]string
+	latestMessage             map[string]string
+	userPresence              map[string]string
 }
 
 type popup struct {
@@ -46,22 +49,19 @@ type popup struct {
 }
 
 var (
-	sidebarStyle = lg.NewStyle().Border(lg.RoundedBorder(), true)
+	sidebarStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(styles.Subtle)
+
+	inputStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(styles.Subtle).Foreground(styles.Text)
 
 	chatStyle = styles.BoxWithLabel{
-		BoxStyle: lg.NewStyle().
-			Border(lg.RoundedBorder()),
-		LabelStyle: lg.NewStyle().Bold(true),
+		BoxStyle:   lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(styles.Subtle),
+		LabelStyle: lg.NewStyle().Foreground(styles.Text).Bold(true),
 	}
 
 	focusedChatStyle = styles.BoxWithLabel{
-		BoxStyle: lg.NewStyle().
-			Border(lg.RoundedBorder()).
-			BorderForeground(lg.Color(styles.StrGreen)),
-		LabelStyle: lg.NewStyle().Bold(true),
+		BoxStyle:   lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(styles.Pink),
+		LabelStyle: lg.NewStyle().Foreground(styles.Text).Bold(true),
 	}
-
-	inputStyle = lg.NewStyle().Border(lg.RoundedBorder(), true)
 )
 
 const (
@@ -71,7 +71,7 @@ const (
 )
 
 func (a *app) Init() tea.Cmd {
-	return tea.Batch(api.GetChannelHistory(a.Client, a.CurrentChannel))
+	return api.GetChannelHistory(a.Client, a.CurrentChannel)
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -143,6 +143,15 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.viewport.GotoBottom()
 		}
 
+		if msg.LatestTs != "" {
+			a.latestMarked[a.CurrentChannel] = msg.LatestTs
+			a.latestMessage[a.CurrentChannel] = msg.LatestTs
+			go func() {
+				if err := a.Client.MarkConversation(a.CurrentChannel, msg.LatestTs); err != nil {
+					log.Printf("Couldn't mark conversation as read: %v", err)
+				}
+			}()
+		}
 	case core.NewMessageMsg:
 		goToBottom := false
 		previouslastMessage := a.lastVisibleMessage()
@@ -201,7 +210,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			displayName := msg.User.Profile.DisplayName
 			if displayName == "" {
-				displayName = msg.User.Profile.FirstName
+				if name := msg.User.Profile.FirstName; name != "" {
+					displayName = name
+				} else {
+					displayName = msg.User.RealName
+				}
 			}
 
 			a.Mutex.Lock()
@@ -213,6 +226,13 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case core.HandleEventMsg:
 		switch ev := msg.Event.(type) {
 		case *api.MessageEvent:
+			if ev.SubType == "" && (ev.ThreadTimestamp == "" || ev.Timestamp == ev.ThreadTimestamp) {
+				if ev.Channel == a.CurrentChannel {
+					a.latestMarked[ev.Channel] = ev.Timestamp
+				}
+				a.latestMessage[ev.Channel] = ev.Timestamp
+			}
+
 			if ev.Channel == a.CurrentChannel {
 				api.MessageHandler(a.MsgChan, ev)
 			}
@@ -228,24 +248,33 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case core.DMsLoadedMsg:
+		go a.updatePresence(msg.DMs)
+
 		var dmItems []sidebarItem
 		for _, dm := range msg.DMs {
-			dmItems = append(dmItems, sidebarItem{title: dm.Name, id: dm.ID, isHeader: false})
+			dmItems = append(dmItems, sidebarItem{title: dm.Name, id: dm.ID, isHeader: false, userID: dm.UserID})
 		}
 		i := len(a.sidebar.items) - 1
 		a.sidebar.items = append(a.sidebar.items[:i], a.sidebar.items[i+1:]...)
 
 		a.sidebar.items = append(a.sidebar.items, dmItems...)
-		a.sidebar.rerenderSidebar()
+		a.rerenderSidebar()
 		return a, nil
 
 	case core.ReactionScrollMsg:
-		log.Printf("Handling message")
 		if msg.Added {
 			a.chat.viewport.ScrollDown(3)
 		} else {
 			a.chat.viewport.ScrollUp(3)
 		}
+
+	case core.ChannelReadMsg:
+		a.latestMarked[msg.ChannelID] = msg.LastRead
+		a.latestMessage[msg.ChannelID] = msg.LatestTs
+
+	case core.PresenceChangedMsg:
+		a.userPresence[msg.User] = msg.Presence
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width - borderPadding
 		a.height = msg.Height - borderPadding
@@ -308,17 +337,17 @@ func (a *app) View() string {
 
 	switch a.focused {
 	case FocusSidebar:
-		sidebar = sidebarStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.sidebar.View())
-		chat = chatStyle.Render("CHAT", a.chat.viewport.View(), a.chat.chatWidth)
+		sidebar = sidebarStyle.BorderForeground(styles.Pink).Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
+		chat = chatStyle.Render(a.CurrentChannel, a.chat.viewport.View(), a.chat.chatWidth)
 		input = inputStyle.Render(a.input.View())
 	case FocusChat:
-		sidebar = sidebarStyle.Render(a.sidebar.View())
-		chat = focusedChatStyle.Render("CHAT", a.chat.viewport.View(), a.chat.chatWidth)
+		sidebar = sidebarStyle.Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
+		chat = focusedChatStyle.Render(a.CurrentChannel, a.chat.viewport.View(), a.chat.chatWidth)
 		input = inputStyle.Render(a.input.View())
 	case FocusInput:
-		sidebar = sidebarStyle.Render(a.sidebar.View())
-		chat = chatStyle.Render("CHAT", a.chat.viewport.View(), a.chat.chatWidth)
-		input = inputStyle.BorderForeground(lg.Color(styles.StrGreen)).Render(a.input.View())
+		sidebar = sidebarStyle.Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
+		chat = chatStyle.Render(a.CurrentChannel, a.chat.viewport.View(), a.chat.chatWidth)
+		input = inputStyle.BorderForeground(styles.Pink).Render(a.input.View())
 	}
 
 	s = lg.JoinHorizontal(lg.Left, sidebar, lg.JoinVertical(lg.Top, chat, input))

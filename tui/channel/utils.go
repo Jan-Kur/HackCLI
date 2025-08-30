@@ -3,6 +3,7 @@ package channel
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Jan-Kur/HackCLI/core"
 	tea "github.com/charmbracelet/bubbletea"
@@ -188,4 +189,23 @@ func (a *app) chatKeybinds(key string, cmds *[]tea.Cmd) bool {
 		return false
 	}
 	return true
+}
+
+func (a *app) updatePresence(Dms []core.Channel) {
+	action := func() {
+		for _, dm := range Dms {
+			presenceObject, err := a.Client.GetUserPresence(dm.UserID)
+			if err != nil {
+				continue
+			}
+			a.MsgChan <- core.PresenceChangedMsg{User: dm.UserID, Presence: presenceObject.Presence}
+		}
+	}
+
+	action()
+
+	ticker := time.NewTicker(3 * time.Minute)
+	for range ticker.C {
+		action()
+	}
 }

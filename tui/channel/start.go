@@ -53,6 +53,9 @@ func Start(initialChannel string) *app {
 				isVisible: false,
 				input:     i,
 			},
+			latestMarked:  make(map[string]string),
+			latestMessage: make(map[string]string),
+			userPresence:  make(map[string]string),
 		},
 		App: core.App{
 			User:      user.UserID,

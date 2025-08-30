@@ -100,6 +100,7 @@ func MessageHandler(msgChan chan tea.Msg, ev *MessageEvent) {
 		Reactions:   make(map[string][]string),
 		IsCollapsed: true,
 		IsReply:     ev.ThreadTimestamp != "" && ev.Timestamp != ev.ThreadTimestamp,
+		SubType:     ev.SubType,
 	}
 
 	log.Printf("%v | %v", message.Ts, message.Content)
@@ -122,7 +123,7 @@ func ReactionRemoveHandler(msgChan chan tea.Msg, ev *ReactionRemovedEvent) {
 	}
 }
 
-func createEventStruct(eventType string, rawData []byte) interface{} {
+func createEventStruct(eventType string, rawData []byte) any {
 	template, exists := EventMapping[eventType]
 	if !exists {
 		return nil

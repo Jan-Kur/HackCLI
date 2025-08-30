@@ -2,6 +2,7 @@ package channel
 
 import (
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 
@@ -15,6 +16,10 @@ import (
 	lg "github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	"github.com/slack-go/slack"
+)
+
+const (
+	itemHeight = 3
 )
 
 type sidebar struct {
@@ -37,6 +42,7 @@ type sidebarItem struct {
 	title    string
 	id       string
 	isHeader bool
+	userID   string
 }
 
 func initializePopup() textinput.Model {
@@ -57,6 +63,7 @@ func initializeChat() viewport.Model {
 func initializeInput() textarea.Model {
 	t := textarea.New()
 	t.Cursor.Blink = true
+	t.Cursor.Style = lg.NewStyle().Foreground(styles.Text)
 
 	return t
 }
@@ -84,7 +91,7 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 		Limit:           100,
 	}
 
-	items = append([]sidebarItem{{title: "CHANNELS", id: "", isHeader: true}}, items...)
+	items = append([]sidebarItem{{title: "════ CHANNELS ═════════════════════════════════════════════════════════════════════════════", id: "", isHeader: true}}, items...)
 
 	slices.SortFunc(userChannels, func(a, b slack.Channel) int {
 		if a.Name < b.Name {
@@ -99,9 +106,29 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 	for _, ch := range userChannels {
 		items = append(items, sidebarItem{id: ch.ID, title: ch.Name})
 	}
+	go func() {
+		for _, ch := range userChannels {
+			channel, err := a.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+				ChannelID:     ch.ID,
+				IncludeLocale: true,
+			})
+			if err != nil {
+				log.Printf("Error getting conversation info: %v", err)
+			}
 
-	items = append(items, sidebarItem{title: "", id: "", isHeader: true},
-		sidebarItem{title: "DMs", id: "", isHeader: true},
+			messageTs := ""
+
+			message, err := api.GetLatestMessage(a.Client, ch.ID)
+			if err == nil {
+				messageTs = message.Timestamp
+			}
+
+			a.MsgChan <- core.ChannelReadMsg{ChannelID: ch.ID, LatestTs: messageTs, LastRead: channel.LastRead}
+		}
+	}()
+
+	items = append(items,
+		sidebarItem{title: "════ DMs ═════════════════════════════════════════════════════════════════════════════", id: "", isHeader: true},
 		sidebarItem{title: "Loading...", id: "", isHeader: true})
 
 	go func() {
@@ -116,9 +143,17 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 		var dmsWithMessages []core.Channel
 
 		for _, dm := range directConvs {
-			hasMessages, err := api.DmHasMessages(a.Client, dm.ID)
-			if err != nil || !hasMessages {
+			latest, err := api.GetLatestMessage(a.Client, dm.ID)
+			if err != nil {
 				continue
+			}
+
+			dmInfo, err := a.Client.GetConversationInfo(&slack.GetConversationInfoInput{
+				ChannelID:     dm.ID,
+				IncludeLocale: true,
+			})
+			if err != nil {
+				log.Printf("Error getting conversation info: %v", err)
 			}
 
 			username := a.getUser(dm.User)
@@ -133,7 +168,10 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 					username = user.Profile.DisplayName
 				}
 			}
-			dmsWithMessages = append(dmsWithMessages, core.Channel{Name: username, ID: dm.ID})
+			dmsWithMessages = append(dmsWithMessages, core.Channel{Name: username, ID: dm.ID, UserID: dm.User})
+
+			a.MsgChan <- core.ChannelReadMsg{LatestTs: latest.Timestamp, LastRead: dmInfo.LastRead,
+				ChannelID: dm.ID}
 		}
 
 		slices.SortFunc(dmsWithMessages, func(a, b core.Channel) int {
@@ -186,25 +224,32 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "up":
-			s.selectedItem = s.nextSelectableItem(-1)
+		case "up", "down":
+			direction := 1
+			if msg.String() == "up" {
+				direction = -1
+			}
 
+			nextSelectedItem := s.nextItem(s.selectedItem, direction)
+
+			if nextSelectedItem == s.selectedItem {
+				if direction == -1 && s.scrollOffset > 0 {
+					s.scrollOffset--
+				}
+				return s, nil
+			}
+
+			s.selectedItem = nextSelectedItem
 			if s.selectedItem < s.scrollOffset {
 				s.scrollOffset = s.selectedItem
 			}
 
-			if s.selectedItem > s.scrollOffset+s.height {
-				s.scrollOffset = len(s.items) - s.height
-			}
-		case "down":
-			s.selectedItem = s.nextSelectableItem(1)
-
-			if s.selectedItem >= s.scrollOffset+s.height {
-				s.scrollOffset = s.selectedItem - s.height + 1
-			}
-
-			if s.selectedItem < s.scrollOffset {
-				s.scrollOffset = 0
+			for {
+				_, end := s.visibleRange()
+				if s.selectedItem < end {
+					break
+				}
+				s.scrollOffset++
 			}
 		case "enter":
 			if s.openChannel != s.selectedItem {
@@ -219,52 +264,95 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 	return s, nil
 }
 
-func (s sidebar) View() string {
-	var items []string
-	var areAllVisible bool
+func (s sidebar) View(latestMarked map[string]string, latestMessage map[string]string, userPresence map[string]string) string {
+	const (
+		borderX      = 2
+		IconBoxWidth = 3
+	)
 
-	end := max(min(s.scrollOffset+s.height, len(s.items)), 0)
-	visibleItems := s.items[s.scrollOffset:end]
-
-	if len(visibleItems) == len(s.items) {
-		areAllVisible = true
+	iconBoxBorder := lg.Border{
+		Top:         "─",
+		Bottom:      "─",
+		Left:        "│",
+		Right:       "│",
+		TopLeft:     "╭",
+		TopRight:    "┬",
+		BottomLeft:  "╰",
+		BottomRight: "┴",
 	}
+
+	var items []string
+
+	start, end := s.visibleRange()
+	if start > len(s.items) {
+		start = len(s.items)
+	}
+	if end > len(s.items) {
+		end = len(s.items)
+	}
+	visibleItems := s.items[start:end]
 
 	for index, item := range visibleItems {
 		absoluteIndex := s.scrollOffset + index
 
-		style := lg.NewStyle().MarginLeft(1)
 		if item.isHeader {
-			style = style.Faint(true).Underline(true)
-		}
+			headerStyle := lg.NewStyle().Bold(true).Foreground(styles.Pink)
 
-		if item.title == "Loading..." {
-			style = style.UnsetUnderline()
-		}
-
-		if s.selectedItem == absoluteIndex {
-			style = style.Align(lg.Left).
-				Border(lg.ThickBorder(), false, false, false, true).BorderForeground(styles.Green)
-		}
-
-		if s.openChannel == absoluteIndex {
-			style = style.Foreground(styles.Green)
-		}
-
-		if runewidth.StringWidth(item.title) <= s.width-1 {
-			items = append(items, style.Render(item.title))
+			if runewidth.StringWidth(item.title) <= s.width {
+				items = append(items, headerStyle.Render(item.title))
+			} else {
+				truncated := runewidth.Truncate(item.title, s.width, "")
+				items = append(items, headerStyle.Render(truncated))
+			}
 		} else {
-			truncated := runewidth.Truncate(item.title, s.width-3, "")
-			items = append(items, style.Render(truncated+"…"))
+			unread := latestMarked[item.id] < latestMessage[item.id]
+
+			channelStyle := lg.NewStyle().Border(lg.RoundedBorder(), true, true, true, false).
+				BorderForeground(styles.Muted).Foreground(styles.Muted)
+
+			iconBox := lg.NewStyle().Border(iconBoxBorder, true).
+				Padding(0, 1).BorderForeground(styles.Muted).Foreground(styles.Muted)
+
+			icon := "#"
+			if strings.HasPrefix(item.id, "D") {
+				if userPresence[item.userID] == "active" {
+					icon = "⬤"
+					iconBox = iconBox.Foreground(styles.Green)
+				} else {
+					icon = "◯"
+					iconBox = iconBox.Foreground(styles.Muted)
+				}
+			}
+
+			if unread {
+				if icon == "#" {
+					iconBox = iconBox.Foreground(styles.Text).Bold(true)
+				}
+				channelStyle = channelStyle.Foreground(styles.Text).Bold(true)
+			}
+
+			if s.selectedItem == absoluteIndex {
+				channelStyle = channelStyle.BorderForeground(styles.Pink)
+				iconBox = iconBox.BorderForeground(styles.Pink)
+			}
+			if s.openChannel == absoluteIndex {
+				if icon == "#" {
+					iconBox = iconBox.Foreground(styles.Pink)
+				}
+				channelStyle = channelStyle.Foreground(styles.Pink)
+			}
+
+			var styledChannel string
+			if runewidth.StringWidth(item.title) <= s.width-1-borderX-IconBoxWidth {
+				styledChannel = channelStyle.Render(item.title)
+			} else {
+				truncated := runewidth.Truncate(item.title, s.width-2-borderX-IconBoxWidth, "")
+				styledChannel = channelStyle.Render(truncated + "…")
+			}
+			items = append(items, lg.JoinHorizontal(lg.Left, iconBox.Render(icon), styledChannel))
 		}
 	}
-
-	var container string
-	if areAllVisible {
-		container = lg.NewStyle().Width(s.width).Height(s.height).Render(lg.JoinVertical(lg.Left, items...))
-	} else {
-		container = lg.NewStyle().Width(s.width).Render(lg.JoinVertical(lg.Left, items...))
-	}
+	container := lg.NewStyle().Width(s.width).Height(s.height).Render(lg.JoinVertical(lg.Left, items...))
 
 	return container
 }
@@ -275,25 +363,64 @@ func (s *sidebar) SetWidth(w int) {
 
 func (s *sidebar) SetHeight(h int) {
 	s.height = h
-	if s.scrollOffset > len(s.items)-s.height {
-		s.scrollOffset = max(0, len(s.items)-s.height)
-	}
-}
 
-func (s *sidebar) nextSelectableItem(next int) int {
-	n := len(s.items)
-	i := s.selectedItem
+	if s.selectedItem < s.scrollOffset {
+		s.scrollOffset = s.selectedItem
+	}
 
 	for {
-		i = (i + next + n) % n
-		if !s.items[i].isHeader {
-			return i
+		_, end := s.visibleRange()
+		if end == len(s.items) {
+			break
 		}
+		if s.selectedItem < end {
+			break
+		}
+		s.scrollOffset++
 	}
 }
 
-func (s *sidebar) rerenderSidebar() {
-	s.View()
+func (s *sidebar) nextItem(currentIndex int, direction int) int {
+	nextIndex := currentIndex + direction
+
+	for nextIndex >= 0 && nextIndex < len(s.items) {
+		if !s.items[nextIndex].isHeader {
+			return nextIndex
+		}
+		nextIndex += direction
+	}
+
+	return currentIndex
+}
+
+func (a *app) rerenderSidebar() {
+	a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence)
+}
+
+func (s *sidebar) visibleRange() (start, end int) {
+	if s.height == 0 || len(s.items) == 0 {
+		return 0, 0
+	}
+
+	start = s.scrollOffset
+	currentHeight := 0
+
+	for i := start; i < len(s.items); i++ {
+		itemHeight := s.items[i].Height()
+		if currentHeight+itemHeight > s.height {
+			return start, i
+		}
+		currentHeight += itemHeight
+	}
+
+	return start, len(s.items)
+}
+
+func (i sidebarItem) Height() int {
+	if i.isHeader {
+		return 1
+	}
+	return itemHeight
 }
 
 type background struct {
@@ -313,7 +440,7 @@ func (m reactionPopup) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil 
 func (m reactionPopup) View() string {
 	box := lg.NewStyle().
 		Border(lg.RoundedBorder(), true).
-		BorderForeground(lg.Color(styles.StrGreen)).
+		BorderForeground(styles.Green).
 		Padding(0, 1)
 	help := lg.NewStyle().Faint(true).Render("Enter to add, Esc to cancel")
 
