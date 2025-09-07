@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/cmd/profile"
 	"github.com/Jan-Kur/HackCLI/tui/channel"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,10 +26,6 @@ func Execute() {
 }
 
 func start(cmd *cobra.Command, args []string) {
-	if !api.IsLoggedIn() {
-		fmt.Println("You are not logged in.\n\nLog in with: hackcli login")
-		os.Exit(1)
-	}
 
 	var initialChannel string
 

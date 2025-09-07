@@ -22,6 +22,8 @@ const (
 	FocusSidebar FocusState = iota
 	FocusChat
 	FocusInput
+	FocusThreadChat
+	FocusThreadInput
 )
 
 type app struct {
@@ -33,13 +35,21 @@ type model struct {
 	sidebar                   sidebar
 	chat                      chat
 	input                     textarea.Model
+	threadWindow              threadWindow
+	popup                     popup
 	focused                   FocusState
 	width, height             int
 	sidebarWidth, inputHeight int
-	popup                     popup
 	latestMarked              map[string]string
 	latestMessage             map[string]string
 	userPresence              map[string]string
+}
+
+type threadWindow struct {
+	isOpen   bool
+	parentTs string
+	chat     chat
+	input    textarea.Model
 }
 
 type popup struct {
@@ -62,12 +72,19 @@ var (
 		BoxStyle:   lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(styles.Pink),
 		LabelStyle: lg.NewStyle().Foreground(styles.Text).Bold(true),
 	}
+
+	threadChatStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(styles.Subtle)
+
+	threadInputStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(styles.Subtle).Foreground(styles.Text)
 )
 
 const (
-	sidebarWidthRatio = 0.2
+	sidebarWidthRatio = 0.15
 	inputHeightRatio  = 0.15
-	borderPadding     = 4
+	borders           = 2
+	ThreadWindowWidth = 0.35
+	minHeight         = 6
+	minWidth          = 10
 )
 
 func (a *app) Init() tea.Cmd {
@@ -123,22 +140,37 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			return a, tea.Quit
 		case "tab":
-			a.focused = (a.focused + 1) % 3
+			if a.threadWindow.isOpen {
+				a.focused = (a.focused + 1) % 5
+			} else {
+				a.focused = (a.focused + 1) % 3
+			}
 		case "shift+tab":
-			a.focused = (a.focused + 2) % 3
+			if a.threadWindow.isOpen {
+				a.focused = (a.focused + 4) % 5
+			} else {
+				a.focused = (a.focused + 2) % 3
+			}
 		}
 
 	case core.ChannelSelectedMsg:
 		a.CurrentChannel = msg.Id
 		a.chat.messages = []core.Message{}
+		a.threadWindow.chat.messages = []core.Message{}
+		a.threadWindow.isOpen = false
+		a.threadWindow.parentTs = ""
+
 		cmd = api.GetChannelHistory(a.Client, a.CurrentChannel)
 		cmds = append(cmds, cmd)
 
 	case core.HistoryLoadedMsg:
 		a.chat.messages = append(msg.Messages, a.chat.messages...)
 		slices.SortFunc(a.chat.messages, sortingMessagesAlgorithm)
-		a.chat.selectedMessage = a.lastVisibleMessage()
-		a.rerenderChat(&cmds)
+
+		cmds = append(cmds, a.getHistoryUsersCmd())
+
+		a.chat.selectedMessage = len(a.chat.messages) - 1
+		a.renderChat(&cmds, &a.chat, false)
 		if a.chat.viewport.Height > 0 {
 			a.chat.viewport.GotoBottom()
 		}
@@ -152,76 +184,214 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}()
 		}
-	case core.NewMessageMsg:
-		goToBottom := false
-		previouslastMessage := a.lastVisibleMessage()
-		if previouslastMessage != -1 {
-			if a.chat.viewport.AtBottom() {
-				a.insertMessage(msg.Message)
-				goToBottom = true
-			} else {
-				a.insertMessage(msg.Message)
-			}
-			if a.chat.selectedMessage == previouslastMessage {
-				a.chat.selectedMessage = a.lastVisibleMessage()
-			}
-			a.rerenderChat(&cmds)
-			if goToBottom {
-				a.chat.viewport.GotoBottom()
+	case core.ThreadLoadedMsg:
+		a.threadWindow.chat.messages = msg.Messages
+		a.chat.selectedMessage = len(a.threadWindow.chat.messages) - 1
+
+		for i, mes := range a.chat.messages {
+			if mes.Ts == a.threadWindow.parentTs {
+				a.chat.messages[i].ReplyCount = len(a.threadWindow.chat.messages) - 1
+
+				var users []string
+				for _, mes := range a.threadWindow.chat.messages[1:] {
+					if !slices.Contains(users, mes.User) {
+						users = append(users, mes.User)
+					}
+				}
+				a.chat.messages[i].ReplyUsers = users
+				a.updateMessage(&cmds, &a.chat, false, i)
+				break
 			}
 		}
 
+		a.renderChat(&cmds, &a.threadWindow.chat, true)
+		if a.threadWindow.chat.viewport.Height > 0 {
+			a.chat.viewport.GotoBottom()
+		}
+	case core.NewMessageMsg:
+		goToBottom := false
+
+		if msg.Message.ThreadId == "" || msg.Message.Ts == msg.Message.ThreadId {
+			previousLastMessage := len(a.chat.messages) - 1
+			if previousLastMessage != -1 {
+				a.insertMessage(msg.Message, &a.chat)
+				if a.chat.viewport.AtBottom() {
+					goToBottom = true
+				}
+				if a.chat.selectedMessage == previousLastMessage {
+					a.chat.selectedMessage = len(a.chat.messages) - 1
+				}
+				a.renderChat(&cmds, &a.chat, false)
+				if goToBottom {
+					a.chat.viewport.GotoBottom()
+				}
+			}
+		} else {
+			parentTs := msg.Message.ThreadId
+
+			for i, mes := range a.chat.messages {
+				if mes.Ts == parentTs {
+					a.chat.messages[i].ReplyCount++
+					if !slices.Contains(a.chat.messages[i].ReplyUsers, msg.Message.User) {
+						a.chat.messages[i].ReplyUsers = append(a.chat.messages[i].ReplyUsers, msg.Message.User)
+					}
+					a.updateMessage(&cmds, &a.chat, false, i)
+					break
+				}
+			}
+
+			if a.threadWindow.isOpen && a.threadWindow.parentTs == parentTs {
+				previousLastMessage := len(a.threadWindow.chat.messages) - 1
+				if previousLastMessage != -1 {
+					a.insertMessage(msg.Message, &a.threadWindow.chat)
+					if a.threadWindow.chat.viewport.AtBottom() {
+						goToBottom = true
+					}
+					if a.threadWindow.chat.selectedMessage == previousLastMessage {
+						a.threadWindow.chat.selectedMessage = len(a.threadWindow.chat.messages) - 1
+					}
+					a.renderChat(&cmds, &a.threadWindow.chat, true)
+					if goToBottom {
+						a.threadWindow.chat.viewport.GotoBottom()
+					}
+				}
+			}
+		}
 	case core.EditedMessageMsg:
-		for i, m := range a.chat.messages {
-			if m.Ts == msg.Ts {
+		for i, mes := range a.chat.messages {
+			if mes.Ts == msg.Ts {
 				a.chat.messages[i].Content = msg.Content
+				a.updateMessage(&cmds, &a.chat, false, i)
 				break
 			}
 		}
-		a.rerenderChat(&cmds)
+
+		if a.threadWindow.isOpen {
+			for i, mes := range a.threadWindow.chat.messages {
+				if mes.Ts == msg.Ts {
+					a.threadWindow.chat.messages[i].Content = msg.Content
+					a.updateMessage(&cmds, &a.threadWindow.chat, true, i)
+					break
+				}
+			}
+		}
 	case core.DeletedMessageMsg:
-		for i, m := range a.chat.messages {
-			if m.Ts == msg.DeletedTs {
-				a.chat.messages = append(a.chat.messages[:i], a.chat.messages[i+1:]...)
+		for i, mes := range a.chat.messages {
+			if mes.Ts == msg.DeletedTs {
+				if mes.ThreadId != mes.Ts {
+					a.chat.messages = append(a.chat.messages[:i], a.chat.messages[i+1:]...)
+					if len(a.chat.messages) == 0 {
+						a.chat.selectedMessage = -1
+					} else {
+						if a.chat.selectedMessage >= i {
+							a.chat.selectedMessage--
+						}
+						if a.chat.selectedMessage < 0 {
+							a.chat.selectedMessage = 0
+						}
+					}
+					a.renderChat(&cmds, &a.chat, false)
+				}
 				break
 			}
 		}
-		a.rerenderChat(&cmds)
+
+		if a.threadWindow.isOpen {
+			for i, mes := range a.threadWindow.chat.messages {
+				if mes.Ts == msg.DeletedTs {
+					a.threadWindow.chat.messages = append(a.threadWindow.chat.messages[:i], a.threadWindow.chat.messages[i+1:]...)
+					if len(a.threadWindow.chat.messages) == 0 {
+						a.threadWindow.chat.selectedMessage = -1
+					} else {
+						if a.threadWindow.chat.selectedMessage >= i {
+							a.threadWindow.chat.selectedMessage--
+						}
+						if a.threadWindow.chat.selectedMessage < 0 {
+							a.threadWindow.chat.selectedMessage = 0
+						}
+					}
+					a.renderChat(&cmds, &a.threadWindow.chat, true)
+					break
+				}
+			}
+		}
 	case core.ReactionAddedMsg:
 		for i, mes := range a.chat.messages {
 			if mes.Ts == msg.MessageTs {
 				reaction := a.chat.messages[i].Reactions[msg.Reaction]
 				reaction = append(reaction, msg.User)
 				a.chat.messages[i].Reactions[msg.Reaction] = reaction
+				a.updateMessage(&cmds, &a.chat, false, i)
 				break
 			}
 		}
-		a.rerenderChat(&cmds)
+		if a.threadWindow.isOpen {
+			for i, mes := range a.threadWindow.chat.messages {
+				if mes.Ts == msg.MessageTs {
+					reaction := a.threadWindow.chat.messages[i].Reactions[msg.Reaction]
+					reaction = append(reaction, msg.User)
+					a.threadWindow.chat.messages[i].Reactions[msg.Reaction] = reaction
+					a.updateMessage(&cmds, &a.threadWindow.chat, true, i)
+					break
+				}
+			}
+		}
 	case core.ReactionRemovedMsg:
 		for i, mes := range a.chat.messages {
 			if mes.Ts == msg.MessageTs {
 				delete(a.chat.messages[i].Reactions, msg.Reaction)
+				a.updateMessage(&cmds, &a.chat, false, i)
 				break
 			}
 		}
-		a.rerenderChat(&cmds)
+
+		if a.threadWindow.isOpen {
+			for i, mes := range a.threadWindow.chat.messages {
+				if mes.Ts == msg.MessageTs {
+					delete(a.threadWindow.chat.messages[i].Reactions, msg.Reaction)
+					a.updateMessage(&cmds, &a.threadWindow.chat, true, i)
+					break
+				}
+			}
+		}
 	case core.UserInfoLoadedMsg:
 		if msg.User != nil {
-
-			displayName := msg.User.Profile.DisplayName
-			if displayName == "" {
-				if name := msg.User.Profile.FirstName; name != "" {
-					displayName = name
+			username := msg.User.Profile.DisplayName
+			if username == "" {
+				if firstName := msg.User.Profile.FirstName; firstName != "" {
+					username = firstName
 				} else {
-					displayName = msg.User.RealName
+					username = msg.User.RealName
 				}
 			}
 
 			a.Mutex.Lock()
-			a.UserCache[msg.User.ID] = displayName
+			a.UserCache[msg.User.ID] = username
 			a.Mutex.Unlock()
 
-			a.rerenderChat(&cmds)
+			if !msg.IsHistory {
+				var indices []int
+				for i, mes := range a.chat.messages {
+					if mes.User == msg.User.ID {
+						indices = append(indices, i)
+					}
+				}
+				if len(indices) > 0 {
+					a.updateMessage(&cmds, &a.chat, false, indices...)
+				}
+
+				if a.threadWindow.isOpen {
+					var threadIndices []int
+					for i, mes := range a.threadWindow.chat.messages {
+						if mes.User == msg.User.ID {
+							threadIndices = append(threadIndices, i)
+						}
+					}
+					if len(threadIndices) > 0 {
+						a.updateMessage(&cmds, &a.threadWindow.chat, true, threadIndices...)
+					}
+				}
+			}
 		}
 	case core.HandleEventMsg:
 		switch ev := msg.Event.(type) {
@@ -236,7 +406,6 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ev.Channel == a.CurrentChannel {
 				api.MessageHandler(a.MsgChan, ev)
 			}
-
 		case *api.ReactionAddedEvent:
 			if ev.Item.Channel == a.CurrentChannel {
 				api.ReactionAddHandler(a.MsgChan, ev)
@@ -276,22 +445,48 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.userPresence[msg.User] = msg.Presence
 
 	case tea.WindowSizeMsg:
-		a.width = msg.Width - borderPadding
-		a.height = msg.Height - borderPadding
+		a.width = msg.Width
+		a.height = msg.Height
+
+		if a.height < 5 || a.width < 10 {
+			return a, nil
+		}
 
 		a.sidebarWidth = int(sidebarWidthRatio * float64(a.width))
-		a.chat.chatWidth = a.width - a.sidebarWidth
+		a.sidebar.SetWidth(a.sidebarWidth - 2)
+		a.sidebar.SetHeight(a.height - 2)
+
 		a.inputHeight = int(inputHeightRatio * float64(a.height))
-		a.chat.chatHeight = a.height - a.inputHeight
+		a.input.SetHeight(a.inputHeight - 2)
 
-		a.sidebar.SetWidth(a.sidebarWidth)
-		a.sidebar.SetHeight(a.height + (borderPadding / 2))
+		availableWidth := a.width - a.sidebarWidth
 
-		a.chat.viewport.Width = a.chat.chatWidth
-		a.chat.viewport.Height = a.chat.chatHeight
+		if a.threadWindow.isOpen {
+			a.threadWindow.chat.chatWidth = int(ThreadWindowWidth * float64(a.width))
+			a.chat.chatWidth = availableWidth - a.threadWindow.chat.chatWidth
+		} else {
+			a.chat.chatWidth = availableWidth
+			a.threadWindow.chat.chatWidth = 0
+		}
 
-		a.input.SetWidth(a.chat.chatWidth)
-		a.input.SetHeight(a.inputHeight)
+		a.chat.viewport.Width = a.chat.chatWidth - 2
+		a.chat.viewport.Height = a.height - a.inputHeight - 2
+
+		a.input.SetWidth(a.chat.chatWidth - 2)
+
+		if a.threadWindow.isOpen {
+			a.threadWindow.chat.viewport.Width = a.threadWindow.chat.chatWidth - 2
+			a.threadWindow.chat.viewport.Height = a.height - a.inputHeight - 2
+
+			a.threadWindow.input.SetWidth(a.threadWindow.chat.chatWidth - 2)
+			a.threadWindow.input.SetHeight(a.inputHeight - 2)
+
+			if len(a.threadWindow.chat.messages) > 0 {
+				a.renderChat(&cmds, &a.threadWindow.chat, true)
+			}
+		}
+
+		a.renderChat(&cmds, &a.chat, false)
 
 		return a, nil
 	}
@@ -303,8 +498,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.input.Blur()
 	case FocusChat:
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			if a.chatKeybinds(keyMsg.String(), &cmds) {
-				return a, nil
+			if a.chatKeybinds(keyMsg.String(), &cmds, false, &a.chat) {
+				return a, tea.Batch(cmds...)
 			}
 		}
 		a.chat.viewport, focusCmd = a.chat.viewport.Update(msg)
@@ -324,6 +519,28 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		a.input, focusCmd = a.input.Update(msg)
 		a.input.Focus()
+	case FocusThreadChat:
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			if a.chatKeybinds(keyMsg.String(), &cmds, true, &a.threadWindow.chat) {
+				return a, tea.Batch(cmds...)
+			}
+		}
+		a.threadWindow.chat.viewport, focusCmd = a.threadWindow.chat.viewport.Update(msg)
+		a.threadWindow.input.Blur()
+	case FocusThreadInput:
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "alt+enter":
+				content := a.threadWindow.input.Value()
+				if strings.TrimSpace(content) != "" {
+					a.threadWindow.input.Reset()
+					go api.SendReply(a.Client, a.CurrentChannel, content, a.threadWindow.parentTs)
+					return a, nil
+				}
+			}
+		}
+		a.threadWindow.input, focusCmd = a.threadWindow.input.Update(msg)
+		a.threadWindow.input.Focus()
 	}
 	cmds = append(cmds, focusCmd)
 
@@ -331,26 +548,36 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a *app) View() string {
-	var s string
-
-	var sidebar, chat, input string
-
-	switch a.focused {
-	case FocusSidebar:
-		sidebar = sidebarStyle.BorderForeground(styles.Pink).Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
-		chat = chatStyle.Render(a.CurrentChannel, a.chat.viewport.View(), a.chat.chatWidth)
-		input = inputStyle.Render(a.input.View())
-	case FocusChat:
-		sidebar = sidebarStyle.Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
-		chat = focusedChatStyle.Render(a.CurrentChannel, a.chat.viewport.View(), a.chat.chatWidth)
-		input = inputStyle.Render(a.input.View())
-	case FocusInput:
-		sidebar = sidebarStyle.Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
-		chat = chatStyle.Render(a.CurrentChannel, a.chat.viewport.View(), a.chat.chatWidth)
-		input = inputStyle.BorderForeground(styles.Pink).Render(a.input.View())
+	if a.width < 10 {
+		s := lg.NewStyle().Foreground(styles.Pink).Bold(true).Render("Too small")
+		return s
+	}
+	if a.height < 5 {
+		s := lg.NewStyle().Foreground(styles.Pink).Bold(true).Render("Too small")
+		return s
 	}
 
-	s = lg.JoinHorizontal(lg.Left, sidebar, lg.JoinVertical(lg.Top, chat, input))
+	sidebar := a.styleSidebar()
+	chat := a.styleMainChat()
+	input := a.styleMainInput()
+
+	var s string
+
+	if a.threadWindow.isOpen {
+		threadChat := a.styleThreadChat()
+		threadInput := a.styleThreadInput()
+
+		s = lg.JoinHorizontal(lg.Left,
+			sidebar,
+			lg.JoinVertical(lg.Top, chat, input),
+			lg.JoinVertical(lg.Top, threadChat, threadInput),
+		)
+	} else {
+		s = lg.JoinHorizontal(lg.Left,
+			sidebar,
+			lg.JoinVertical(lg.Top, chat, input),
+		)
+	}
 
 	if a.popup.isVisible {
 		bg := background{view: s}

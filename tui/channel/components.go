@@ -34,6 +34,7 @@ type sidebar struct {
 type chat struct {
 	viewport              viewport.Model
 	messages              []core.Message
+	displayedMessages     []string
 	selectedMessage       int
 	chatWidth, chatHeight int
 }
@@ -157,13 +158,13 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 			}
 
 			username := a.getUser(dm.User)
-			if username == "... " {
+			if username == "LOADING" {
 				user, err := api.GetUserInfo(a.Client, dm.User)
 				if err != nil {
 					continue
 				}
 				if user.Profile.DisplayName == "" {
-					username = user.RealName
+					username = user.Profile.FirstName
 				} else {
 					username = user.Profile.DisplayName
 				}
@@ -193,7 +194,7 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 
 	if initialChannelID == "" {
 		if len(items) > 0 {
-			initialChannelID = items[0].id
+			initialChannelID = items[1].id
 		} else {
 			panic("NO CHANNELS, ABORT")
 		}
@@ -231,7 +232,6 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 			}
 
 			nextSelectedItem := s.nextItem(s.selectedItem, direction)
-
 			if nextSelectedItem == s.selectedItem {
 				if direction == -1 && s.scrollOffset > 0 {
 					s.scrollOffset--

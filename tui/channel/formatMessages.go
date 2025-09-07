@@ -2,6 +2,7 @@ package channel
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,32 +15,19 @@ import (
 	lg "github.com/charmbracelet/lipgloss"
 )
 
-func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
-
-	if mes.IsReply {
-		var parent core.Message
-		for i, m := range a.chat.messages {
-			if m.Ts == mes.ThreadId {
-				parent = a.chat.messages[i]
-				break
-			}
-		}
-		if parent.IsCollapsed {
-			return "", nil
-		}
-	}
-
+func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 	username := a.getUser(mes.User)
 
 	var cmds []tea.Cmd
-	if username == "... " {
+	if username == "LOADING" {
 		cmds = append(cmds, func() tea.Msg {
 			user, err := api.GetUserInfo(a.Client, mes.User)
 			if err != nil {
 				return nil
 			}
-			return core.UserInfoLoadedMsg{User: user}
+			return core.UserInfoLoadedMsg{User: user, IsHistory: false}
 		})
+		username = "..."
 	}
 
 	parts := strings.Split(mes.Ts, ".")
@@ -85,7 +73,7 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 	}
 
 	selected := styles.Subtle
-	if mes.Ts == a.chat.messages[a.chat.selectedMessage].Ts {
+	if mes.Ts == chat.messages[chat.selectedMessage].Ts {
 		selected = styles.Pink
 	}
 
@@ -105,18 +93,19 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 		BottomRight: "╯",
 	}
 
-	topContentWidth := lg.Width("  " + username + timestamp)
+	topContentWidth := lg.Width(" " + username + " " + timestamp + " ")
 
-	connectingLine := "├" + strings.Repeat("─", topContentWidth) + "┴" + strings.Repeat("─", a.chat.chatWidth-3-topContentWidth) + "╮"
+	connectingLine := "├" + strings.Repeat("─", topContentWidth) + "┴" + strings.Repeat("─", chat.chatWidth-2-3-topContentWidth) + "╮"
 
 	var styledUsername string
 	if a.User == mes.User {
-		styledUsername = lg.NewStyle().Foreground(styles.Rose).Bold(true).Render(username)
+		styledUsername = lg.NewStyle().Foreground(styles.Rose).Bold(true).MarginRight(1).Render(username)
 	} else {
-		styledUsername = lg.NewStyle().Foreground(styles.Pine).Bold(true).Render(username)
+		styledUsername = lg.NewStyle().Foreground(styles.Pine).Bold(true).MarginRight(1).Render(username)
 	}
+
 	styledTime := lg.NewStyle().Foreground(styles.Subtle).Render(timestamp)
-	styledText := lg.NewStyle().Width(a.chat.chatWidth - 4).Foreground(styles.Text).Render(text)
+	styledText := lg.NewStyle().Width(chat.chatWidth - 6).Foreground(styles.Text).Render(text)
 
 	topBlock := lg.NewStyle().Border(topBorder, true, true, false).BorderForeground(selected).
 		Render(lg.NewStyle().Margin(0, 1).Render(lg.JoinHorizontal(lg.Left, styledUsername, styledTime)))
@@ -127,7 +116,7 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 	}
 
 	if len(emojis) > 0 {
-		styledEmojis := lg.NewStyle().Margin(0, 1).MaxWidth(a.chat.chatWidth - 4).Render(lg.JoinHorizontal(0, emojis...))
+		styledEmojis := lg.NewStyle().Margin(0, 1).MaxWidth(chat.chatWidth - 6).Render(lg.JoinHorizontal(0, emojis...))
 
 		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, styledEmojis)
 	}
@@ -135,40 +124,40 @@ func (a *app) formatMessage(mes core.Message) (string, tea.Cmd) {
 		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, lg.JoinVertical(lg.Left, links...))
 	}
 
-	if mes.IsCollapsed && mes.ThreadId == mes.Ts {
-		var replyUsers []string
-		var replyCount int
-		for _, reply := range a.chat.messages {
-			if reply.ThreadId == mes.Ts && reply.Ts != mes.Ts {
-				replyCount++
-				if len(replyUsers) < 3 {
-					replyUser := a.getUser(reply.User)
-					if replyUser == "... " {
-						cmds = append(cmds, func() tea.Msg {
-							user, err := api.GetUserInfo(a.Client, mes.User)
-							if err != nil {
-								return nil
-							}
-							return core.UserInfoLoadedMsg{User: user}
-						})
-					}
-					replyUsers = append(replyUsers, replyUser)
-				}
+	if mes.ReplyCount > 0 {
+		var usernames []string
+		var userIDs []string
+		for _, userID := range mes.ReplyUsers {
+			if len(usernames) == 3 {
+				break
 			}
+
+			if slices.Contains(userIDs, userID) {
+				continue
+			}
+
+			name := a.getUser(userID)
+			if name == "LOADING" {
+				cmds = append(cmds, func() tea.Msg {
+					user, err := api.GetUserInfo(a.Client, userID)
+					if err != nil {
+						return nil
+					}
+					return core.UserInfoLoadedMsg{User: user, IsHistory: false}
+				})
+				name = "..."
+			}
+
+			usernames = append(usernames, name)
+			userIDs = append(userIDs, userID)
 		}
-		if replyCount > 0 {
-			userList := lg.NewStyle().Foreground(styles.Muted).Render(strings.Join(replyUsers, ", ") + fmt.Sprintf(" %v", replyCount))
-			bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, userList)
-		}
+		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, lg.NewStyle().
+			Foreground(styles.Muted).Render(strings.Join(usernames, ", ")+fmt.Sprintf(" %v", mes.ReplyCount)))
 	}
 
 	finalBlock := lg.JoinVertical(lg.Top, topBlock, lg.NewStyle().Foreground(selected).Render(connectingLine), lg.NewStyle().
-		Border(bottomBorder, false, true, true).BorderForeground(selected).Width(a.chat.chatWidth-2).
+		Border(bottomBorder, false, true, true).BorderForeground(selected).Width(chat.chatWidth-4).
 		Render(lg.NewStyle().Padding(0, 1).Render(bottomBlock)))
-
-	if mes.IsReply {
-		return lg.NewStyle().Margin(0, 0, 0, 2).Width(a.chat.chatWidth - 4).BorderForeground(selected).Render(finalBlock), tea.Batch(cmds...)
-	}
 
 	return finalBlock, tea.Batch(cmds...)
 }
@@ -178,16 +167,15 @@ func (a *app) getUser(userID string) string {
 	user, ok := a.UserCache[userID]
 	a.Mutex.RUnlock()
 	if ok {
-		return user + " "
+		return user
 	}
-
 	a.Mutex.Lock()
-	if _, ok := a.UserCache[userID]; ok {
+	if user, ok := a.UserCache[userID]; ok {
 		a.Mutex.Unlock()
-		return a.getUser(userID)
+		return user
 	}
 	a.UserCache[userID] = "..."
 	a.Mutex.Unlock()
 
-	return "... "
+	return "LOADING"
 }

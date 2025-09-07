@@ -34,24 +34,25 @@ func Start(initialChannel string) *app {
 
 	user, _ := client.AuthTest()
 
-	v := initializeChat()
-
-	t := initializeInput()
-
-	i := initializePopup()
-
 	msgChan := make(chan tea.Msg)
 
 	a := &app{
 		model: model{
 			chat: chat{
-				viewport: v,
+				viewport: initializeChat(),
 			},
-			input:   t,
+			input:   initializeInput(),
 			focused: FocusInput,
 			popup: popup{
 				isVisible: false,
-				input:     i,
+				input:     initializePopup(),
+			},
+			threadWindow: threadWindow{
+				isOpen: false,
+				chat: chat{
+					viewport: initializeChat(),
+				},
+				input: initializeInput(),
 			},
 			latestMarked:  make(map[string]string),
 			latestMessage: make(map[string]string),

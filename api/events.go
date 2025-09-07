@@ -48,6 +48,8 @@ type MessageEvent struct {
 	LastRead         string            `json:"last_read,omitempty"`
 	Subscribed       bool              `json:"subscribed,omitempty"`
 	UnreadCount      int               `json:"unread_count,omitempty"`
+	ReplyCount       int               `json:"reply_count,omitempty"`
+	ReplyUsers       []string          `json:"reply_users,omitempty"`
 	SubType          string            `json:"subtype,omitempty"`
 	Hidden           bool              `json:"hidden,omitempty"`
 	DeletedTimestamp string            `json:"deleted_ts,omitempty"`

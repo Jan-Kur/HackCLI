@@ -76,6 +76,7 @@ func ack(conn *websocket.Conn) {
 func MessageHandler(msgChan chan tea.Msg, ev *MessageEvent) {
 	switch ev.SubType {
 	case "message_deleted":
+		log.Printf("message was deleted")
 		msgChan <- core.DeletedMessageMsg{DeletedTs: ev.DeletedTimestamp}
 		return
 	case "message_changed":
@@ -92,18 +93,16 @@ func MessageHandler(msgChan chan tea.Msg, ev *MessageEvent) {
 	}
 
 	message := core.Message{
-		Ts:          ev.Timestamp,
-		ThreadId:    ev.ThreadTimestamp,
-		User:        ev.User,
-		Content:     ev.Text,
-		Files:       files,
-		Reactions:   make(map[string][]string),
-		IsCollapsed: true,
-		IsReply:     ev.ThreadTimestamp != "" && ev.Timestamp != ev.ThreadTimestamp,
-		SubType:     ev.SubType,
+		Ts:         ev.Timestamp,
+		ThreadId:   ev.ThreadTimestamp,
+		User:       ev.User,
+		Content:    ev.Text,
+		Files:      files,
+		Reactions:  make(map[string][]string),
+		SubType:    ev.SubType,
+		ReplyCount: ev.ReplyCount,
+		ReplyUsers: ev.ReplyUsers,
 	}
-
-	log.Printf("%v | %v", message.Ts, message.Content)
 
 	msgChan <- core.NewMessageMsg{Message: message}
 }

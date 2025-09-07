@@ -23,10 +23,10 @@ type Message struct {
 	Content     string
 	Attachments []Attachment
 	Files       []File
-	IsCollapsed bool
 	Reactions   map[string][]string
-	IsReply     bool
 	SubType     string
+	ReplyCount  int
+	ReplyUsers  []string
 }
 
 type Reaction struct {
@@ -75,7 +75,8 @@ type HistoryLoadedMsg struct {
 }
 
 type UserInfoLoadedMsg struct {
-	User *slack.User
+	User      *slack.User
+	IsHistory bool
 }
 
 type ReactionAddedMsg struct {
@@ -114,4 +115,8 @@ type ChannelReadMsg struct {
 type PresenceChangedMsg struct {
 	User     string
 	Presence string
+}
+
+type ThreadLoadedMsg struct {
+	Messages []Message
 }
