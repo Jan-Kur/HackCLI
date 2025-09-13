@@ -7,8 +7,15 @@ import (
 	"github.com/slack-go/slack"
 )
 
+type Config struct {
+	Token  string `json:"token"`
+	Cookie string `json:"cookie"`
+	Theme  string `json:"theme"`
+}
+
 type App struct {
 	User           string
+	Config         Config
 	Client         *slack.Client
 	MsgChan        chan tea.Msg
 	CurrentChannel string
@@ -119,4 +126,16 @@ type PresenceChangedMsg struct {
 
 type ThreadLoadedMsg struct {
 	Messages []Message
+}
+
+type ChannelJoinedMsg struct {
+	Channel string
+}
+
+type ChannelLeftMsg struct {
+	Channel string
+}
+
+type ChannelInfoLoadedMsg struct {
+	Channel *slack.Channel
 }

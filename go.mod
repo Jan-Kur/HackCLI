@@ -11,7 +11,6 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-runewidth v0.0.16
-	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/rmhubbert/bubbletea-overlay v0.4.0
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.9.1

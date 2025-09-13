@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	sl "github.com/Jan-Kur/HackCLI/api"
+	"github.com/Jan-Kur/HackCLI/api"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -74,7 +74,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				statusText := list[2].(item).input.Value()
 				statusEmoji := list[3].(item).input.Value()
 
-				token, err := sl.GetToken()
+				cfg, err := api.LoadConfig()
 				if err != nil {
 					fmt.Printf("Error creating a slack client: %v\n", err)
 					os.Exit(1)
@@ -99,7 +99,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 				values := url.Values{
-					"token":   {token},
+					"token":   {cfg.Token},
 					"profile": {string(profile)},
 				}
 
@@ -213,13 +213,13 @@ func (m model) View() string {
 }
 
 func Start() model {
-	token, err := sl.GetToken()
+	cfg, err := api.LoadConfig()
 	if err != nil {
 		fmt.Printf("Error getting token: %v\n", err)
 		os.Exit(1)
 	}
 
-	api := slack.New(token)
+	api := slack.New(cfg.Token)
 
 	authResp, err := api.AuthTest()
 	if err != nil {

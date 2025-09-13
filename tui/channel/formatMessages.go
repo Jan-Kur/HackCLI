@@ -10,7 +10,6 @@ import (
 
 	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
-	"github.com/Jan-Kur/HackCLI/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -60,21 +59,30 @@ func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 
 	var emojis []string
 	for _, reaction := range reactionsSlice {
-		emoji := lg.NewStyle().Border(lg.RoundedBorder(), true).
-			BorderForeground(styles.Subtle).Foreground(styles.Subtle).Render(":" + reaction.emoji + ":" + " " + strconv.Itoa(reaction.count))
+		emoji := lg.NewStyle().
+			Border(lg.RoundedBorder(), true).
+			BorderForeground(a.theme.Subtle).
+			Background(a.theme.Background).
+			BorderBackground(a.theme.Background).
+			Foreground(a.theme.Subtle).
+			Render(":" + reaction.emoji + ":" + " " + strconv.Itoa(reaction.count))
 		emojis = append(emojis, emoji)
 	}
 
 	var links []string
 	for _, f := range mes.Files {
 		if f.URLPrivate != "" {
-			links = append(links, lg.NewStyle().Foreground(styles.Rose).Render(f.URLPrivate))
+			links = append(links, lg.NewStyle().
+				Background(a.theme.Background).
+				BorderBackground(a.theme.Background).
+				Foreground(a.theme.Secondary).
+				Render(f.URLPrivate))
 		}
 	}
 
-	selected := styles.Subtle
+	selected := a.theme.Border
 	if mes.Ts == chat.messages[chat.selectedMessage].Ts {
-		selected = styles.Pink
+		selected = a.theme.Selected
 	}
 
 	topBorder := lg.Border{
@@ -95,20 +103,49 @@ func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 
 	topContentWidth := lg.Width(" " + username + " " + timestamp + " ")
 
-	connectingLine := "├" + strings.Repeat("─", topContentWidth) + "┴" + strings.Repeat("─", chat.chatWidth-2-3-topContentWidth) + "╮"
+	connectingLine := "├" + strings.Repeat("─", topContentWidth) + "┴" + strings.Repeat("─", max(0, chat.chatWidth-2-3-topContentWidth)) + "╮"
 
 	var styledUsername string
 	if a.User == mes.User {
-		styledUsername = lg.NewStyle().Foreground(styles.Rose).Bold(true).MarginRight(1).Render(username)
+		styledUsername = lg.NewStyle().
+			Background(a.theme.Background).
+			BorderBackground(a.theme.Background).
+			Foreground(a.theme.Primary).
+			Bold(true).
+			Render(username + " ")
 	} else {
-		styledUsername = lg.NewStyle().Foreground(styles.Pine).Bold(true).MarginRight(1).Render(username)
+		styledUsername = lg.NewStyle().
+			Background(a.theme.Background).
+			BorderBackground(a.theme.Background).
+			Foreground(a.theme.Secondary).
+			Bold(true).
+			Render(username + " ")
 	}
 
-	styledTime := lg.NewStyle().Foreground(styles.Subtle).Render(timestamp)
-	styledText := lg.NewStyle().Width(chat.chatWidth - 6).Foreground(styles.Text).Render(text)
+	styledTime := lg.NewStyle().
+		Background(a.theme.Background).
+		BorderBackground(a.theme.Background).
+		Foreground(a.theme.Subtle).
+		Render(timestamp + " ")
 
-	topBlock := lg.NewStyle().Border(topBorder, true, true, false).BorderForeground(selected).
-		Render(lg.NewStyle().Margin(0, 1).Render(lg.JoinHorizontal(lg.Left, styledUsername, styledTime)))
+	styledText := lg.NewStyle().
+		Width(chat.chatWidth - 6).
+		Background(a.theme.Background).
+		BorderBackground(a.theme.Background).
+		Foreground(a.theme.Text).
+		Render(text)
+
+	innerTopBlock := lg.NewStyle().
+		Border(topBorder, true, true, false).
+		BorderForeground(selected).
+		Background(a.theme.Background).
+		BorderBackground(a.theme.Background).
+		Render(" " + lg.JoinHorizontal(lg.Left, styledUsername, styledTime))
+
+	fullTopBlock := lg.NewStyle().
+		Width(chat.chatWidth - 2).
+		Background(a.theme.Background).
+		Render(innerTopBlock)
 
 	var bottomBlock string
 	if text != "" {
@@ -116,12 +153,28 @@ func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 	}
 
 	if len(emojis) > 0 {
-		styledEmojis := lg.NewStyle().Margin(0, 1).MaxWidth(chat.chatWidth - 6).Render(lg.JoinHorizontal(0, emojis...))
+		styledEmojis := lg.NewStyle().
+			Background(a.theme.Background).
+			BorderBackground(a.theme.Background).
+			MaxWidth(chat.chatWidth-6).
+			Padding(0, 1).
+			Render(lg.JoinHorizontal(0, emojis...))
 
-		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, styledEmojis)
+		finalEmojis := lg.NewStyle().
+			Width(chat.chatWidth - 6).
+			Background(a.theme.Background).
+			Render(styledEmojis)
+
+		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, finalEmojis)
 	}
 	if len(links) > 0 {
-		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, lg.JoinVertical(lg.Left, links...))
+		linksContainer := lg.NewStyle().
+			Width(chat.chatWidth - 6).
+			Background(a.theme.Background).
+			BorderBackground(a.theme.Background).
+			Render(lg.JoinVertical(lg.Left, links...))
+
+		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, linksContainer)
 	}
 
 	if mes.ReplyCount > 0 {
@@ -151,15 +204,41 @@ func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 			usernames = append(usernames, name)
 			userIDs = append(userIDs, userID)
 		}
-		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, lg.NewStyle().
-			Foreground(styles.Muted).Render(strings.Join(usernames, ", ")+fmt.Sprintf(" %v", mes.ReplyCount)))
+		replyInfo := lg.NewStyle().
+			Background(a.theme.Background).
+			Width(chat.chatWidth - 6).
+			Render(lg.NewStyle().
+				Foreground(a.theme.Muted).
+				Background(a.theme.Background).
+				BorderBackground(a.theme.Background).
+				Render(strings.Join(usernames, ", ") + fmt.Sprintf(" %v", mes.ReplyCount)))
+		bottomBlock = lg.JoinVertical(lg.Top, bottomBlock, replyInfo)
 	}
 
-	finalBlock := lg.JoinVertical(lg.Top, topBlock, lg.NewStyle().Foreground(selected).Render(connectingLine), lg.NewStyle().
-		Border(bottomBorder, false, true, true).BorderForeground(selected).Width(chat.chatWidth-4).
-		Render(lg.NewStyle().Padding(0, 1).Render(bottomBlock)))
+	bottomBlockStyled := lg.NewStyle().
+		Background(a.theme.Background).
+		BorderBackground(a.theme.Background).
+		Padding(0, 1).
+		Render(bottomBlock)
 
-	return finalBlock, tea.Batch(cmds...)
+	connectingLineStyled := lg.NewStyle().
+		Foreground(selected).
+		Background(a.theme.Background).
+		BorderBackground(a.theme.Background).
+		Render(connectingLine)
+
+	finalBlock := lg.JoinVertical(lg.Top,
+		fullTopBlock,
+		connectingLineStyled,
+		lg.NewStyle().
+			Border(bottomBorder, false, true, true).
+			BorderForeground(selected).
+			Background(a.theme.Background).
+			BorderBackground(a.theme.Background).
+			Width(chat.chatWidth-4).
+			Render(bottomBlockStyled))
+
+	return lg.NewStyle().Width(chat.chatWidth - 2).Render(finalBlock), tea.Batch(cmds...)
 }
 
 func (a *app) getUser(userID string) string {

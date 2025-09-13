@@ -3,9 +3,11 @@ package api
 import "github.com/Jan-Kur/HackCLI/core"
 
 var EventMapping = map[string]any{
-	"message":          MessageEvent{},
-	"reaction_added":   ReactionAddedEvent{},
-	"reaction_removed": ReactionRemovedEvent{},
+	"message":               MessageEvent{},
+	"reaction_added":        ReactionAddedEvent{},
+	"reaction_removed":      ReactionRemovedEvent{},
+	"member_joined_channel": ChannelJoinedEvent{},
+	"channel_left":          ChannelLeftEvent{},
 }
 
 type ReactionAddedEvent ReactionEvent
@@ -58,4 +60,14 @@ type MessageEvent struct {
 		Ts   string `json:"ts"`
 		Text string `json:"text"`
 	} `json:"message,omitempty"`
+}
+
+type ChannelJoinedEvent struct {
+	User        string `json:"user"`
+	Channel     string `json:"channel"`
+	ChannelType string `json:"channel_type"`
+}
+
+type ChannelLeftEvent struct {
+	Channel string `json:"channel"`
 }

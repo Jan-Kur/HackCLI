@@ -10,7 +10,6 @@ import (
 	"github.com/Jan-Kur/HackCLI/core"
 	"github.com/Jan-Kur/HackCLI/tui/styles"
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -46,10 +45,20 @@ type sidebarItem struct {
 	userID   string
 }
 
-func initializePopup() textinput.Model {
-	t := textinput.New()
-	t.Placeholder = "Enter an emoji eg. heavysob..."
-	t.Width = 50
+func initializePopup(theme styles.Theme) textarea.Model {
+	t := textarea.New()
+
+	t.FocusedStyle = textarea.Style{
+		Text:        lg.NewStyle().Foreground(theme.Text).Background(theme.Background),
+		CursorLine:  lg.NewStyle().Foreground(theme.Text).Background(theme.Background),
+		Placeholder: lg.NewStyle().Foreground(theme.Text).Faint(true).Background(theme.Background).Width(50),
+	}
+
+	t.BlurredStyle = t.FocusedStyle
+
+	t.Prompt = ""
+	t.Cursor.Style = lg.NewStyle().Foreground(theme.Text)
+	t.Focus()
 
 	return t
 }
@@ -61,10 +70,18 @@ func initializeChat() viewport.Model {
 	return v
 }
 
-func initializeInput() textarea.Model {
+func initializeInput(theme styles.Theme) textarea.Model {
 	t := textarea.New()
+	t.FocusedStyle = textarea.Style{
+		Text:       lg.NewStyle().Foreground(theme.Text).Background(theme.Background),
+		LineNumber: lg.NewStyle().Foreground(theme.Text).Background(theme.Background),
+		CursorLine: lg.NewStyle().Foreground(theme.Text).Background(theme.Background),
+	}
+	t.BlurredStyle = t.FocusedStyle
+
 	t.Cursor.Blink = true
-	t.Cursor.Style = lg.NewStyle().Foreground(styles.Text)
+	t.Cursor.Style = lg.NewStyle().Foreground(theme.Text)
+	t.Blur()
 
 	return t
 }
@@ -264,7 +281,7 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 	return s, nil
 }
 
-func (s sidebar) View(latestMarked map[string]string, latestMessage map[string]string, userPresence map[string]string) string {
+func (s sidebar) View(theme styles.Theme, latestMarked map[string]string, latestMessage map[string]string, userPresence map[string]string) string {
 	const (
 		borderX      = 2
 		IconBoxWidth = 3
@@ -296,7 +313,7 @@ func (s sidebar) View(latestMarked map[string]string, latestMessage map[string]s
 		absoluteIndex := s.scrollOffset + index
 
 		if item.isHeader {
-			headerStyle := lg.NewStyle().Bold(true).Foreground(styles.Pink)
+			headerStyle := lg.NewStyle().Bold(true).Foreground(theme.Selected).Background(theme.Background).Width(s.width)
 
 			if runewidth.StringWidth(item.title) <= s.width {
 				items = append(items, headerStyle.Render(item.title))
@@ -307,11 +324,20 @@ func (s sidebar) View(latestMarked map[string]string, latestMessage map[string]s
 		} else {
 			unread := latestMarked[item.id] < latestMessage[item.id]
 
-			channelStyle := lg.NewStyle().Border(lg.RoundedBorder(), true, true, true, false).
-				BorderForeground(styles.Muted).Foreground(styles.Muted)
+			channelStyle := lg.NewStyle().
+				Border(lg.RoundedBorder(), true, true, true, false).
+				BorderForeground(theme.Muted).
+				Foreground(theme.Muted).
+				Background(theme.Background).
+				BorderBackground(theme.Background)
 
-			iconBox := lg.NewStyle().Border(iconBoxBorder, true).
-				Padding(0, 1).BorderForeground(styles.Muted).Foreground(styles.Muted)
+			iconBox := lg.NewStyle().
+				Border(iconBoxBorder, true).
+				Padding(0, 1).
+				BorderForeground(theme.Muted).
+				Foreground(theme.Muted).
+				Background(theme.Background).
+				BorderBackground(theme.Background)
 
 			icon := "#"
 			if strings.HasPrefix(item.id, "D") {
@@ -320,26 +346,26 @@ func (s sidebar) View(latestMarked map[string]string, latestMessage map[string]s
 					iconBox = iconBox.Foreground(styles.Green)
 				} else {
 					icon = "◯"
-					iconBox = iconBox.Foreground(styles.Muted)
+					iconBox = iconBox.Foreground(styles.Gray)
 				}
 			}
 
 			if unread {
 				if icon == "#" {
-					iconBox = iconBox.Foreground(styles.Text).Bold(true)
+					iconBox = iconBox.Foreground(theme.Text).Bold(true)
 				}
-				channelStyle = channelStyle.Foreground(styles.Text).Bold(true)
+				channelStyle = channelStyle.Foreground(theme.Text).Bold(true)
 			}
 
 			if s.selectedItem == absoluteIndex {
-				channelStyle = channelStyle.BorderForeground(styles.Pink)
-				iconBox = iconBox.BorderForeground(styles.Pink)
+				channelStyle = channelStyle.BorderForeground(theme.Selected)
+				iconBox = iconBox.BorderForeground(theme.Selected)
 			}
 			if s.openChannel == absoluteIndex {
 				if icon == "#" {
-					iconBox = iconBox.Foreground(styles.Pink)
+					iconBox = iconBox.Foreground(theme.Selected)
 				}
-				channelStyle = channelStyle.Foreground(styles.Pink)
+				channelStyle = channelStyle.Foreground(theme.Selected)
 			}
 
 			var styledChannel string
@@ -349,7 +375,13 @@ func (s sidebar) View(latestMarked map[string]string, latestMessage map[string]s
 				truncated := runewidth.Truncate(item.title, s.width-2-borderX-IconBoxWidth, "")
 				styledChannel = channelStyle.Render(truncated + "…")
 			}
-			items = append(items, lg.JoinHorizontal(lg.Left, iconBox.Render(icon), styledChannel))
+
+			finalItem := lg.NewStyle().
+				Width(s.width).
+				Background(theme.Background).
+				Render(lg.JoinHorizontal(lg.Left, iconBox.Render(icon), styledChannel))
+
+			items = append(items, finalItem)
 		}
 	}
 	container := lg.NewStyle().Width(s.width).Height(s.height).Render(lg.JoinVertical(lg.Left, items...))
@@ -394,7 +426,7 @@ func (s *sidebar) nextItem(currentIndex int, direction int) int {
 }
 
 func (a *app) rerenderSidebar() {
-	a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence)
+	a.sidebar.View(a.theme, a.latestMarked, a.latestMessage, a.userPresence)
 }
 
 func (s *sidebar) visibleRange() (start, end int) {
@@ -431,19 +463,24 @@ func (m background) Init() tea.Cmd                           { return nil }
 func (m background) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
 func (m background) View() string                            { return m.view }
 
-type reactionPopup struct {
-	input *textinput.Model
-}
-
-func (m reactionPopup) Init() tea.Cmd                           { return nil }
-func (m reactionPopup) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
-func (m reactionPopup) View() string {
+func (p popup) Init() tea.Cmd                           { return nil }
+func (p popup) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return p, nil }
+func (p popup) View() string {
 	box := lg.NewStyle().
 		Border(lg.RoundedBorder(), true).
-		BorderForeground(styles.Green).
+		BorderForeground(p.theme.Border).
+		Background(p.theme.Background).
+		BorderBackground(p.theme.Background).
 		Padding(0, 1)
-	help := lg.NewStyle().Faint(true).Render("Enter to add, Esc to cancel")
 
-	body := lg.JoinVertical(lg.Left, m.input.View(), help)
+	var body string
+
+	switch p.popupType {
+	case PopupReaction, PopupEdit, PopupJoinChannel:
+		help := lg.NewStyle().Background(p.theme.Background).Foreground(p.theme.Subtle).Width(p.input.Width()).Render("\nAlt+Enter/Add  Esc/Cancel")
+		body = lg.JoinVertical(lg.Left, p.input.View(), help)
+	case PopupErrorMessage:
+		body = lg.NewStyle().Background(p.theme.Background).Foreground(styles.Pink).Render(p.errorMessage)
+	}
 	return box.Render(body)
 }

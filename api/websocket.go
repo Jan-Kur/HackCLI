@@ -122,6 +122,18 @@ func ReactionRemoveHandler(msgChan chan tea.Msg, ev *ReactionRemovedEvent) {
 	}
 }
 
+func ChannelJoinHandler(msgChan chan tea.Msg, ev *ChannelJoinedEvent) {
+	msgChan <- core.ChannelJoinedMsg{
+		Channel: ev.Channel,
+	}
+}
+
+func ChannelLeaveHandler(msgChan chan tea.Msg, ev *ChannelLeftEvent) {
+	msgChan <- core.ChannelLeftMsg{
+		Channel: ev.Channel,
+	}
+}
+
 func createEventStruct(eventType string, rawData []byte) any {
 	template, exists := EventMapping[eventType]
 	if !exists {

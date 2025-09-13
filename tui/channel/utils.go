@@ -152,8 +152,36 @@ func (a *app) chatKeybinds(key string, cmds *[]tea.Cmd, isThread bool, chat *cha
 			}
 		}
 	case "r":
+		mes := chat.messages[chat.selectedMessage]
+
+		a.popup.popupType = PopupReaction
+		a.popup.targetMes = mes
+		a.popup.input.SetHeight(1)
+		a.popup.input.ShowLineNumbers = false
+		a.popup.input.Placeholder = "thumbsup"
+		a.popup.input.SetWidth(50)
+		a.popup.input.Reset()
 		a.popup.isVisible = true
 		a.popup.input.Focus()
+	case "d":
+		mes := &chat.messages[chat.selectedMessage]
+		if mes.User == a.User {
+			go a.Client.DeleteMessage(a.CurrentChannel, mes.Ts)
+		}
+	case "e":
+		mes := chat.messages[chat.selectedMessage]
+
+		if mes.User == a.User {
+			a.popup.popupType = PopupEdit
+			a.popup.targetMes = mes
+			a.popup.input.SetValue(mes.Content)
+			a.popup.input.ShowLineNumbers = false
+			a.popup.input.Placeholder = "Edit message..."
+			a.popup.input.SetHeight(min(max(1, lg.Height(mes.Content)), 25))
+			a.popup.input.SetWidth(50)
+			a.popup.isVisible = true
+			a.popup.input.Focus()
+		}
 	default:
 		return false
 	}
@@ -207,9 +235,9 @@ func (a *app) getHistoryUsersCmd() tea.Cmd {
 func (a *app) styleSidebar() string {
 	style := sidebarStyle
 	if a.focused == FocusSidebar {
-		style = style.BorderForeground(styles.Pink)
+		style = style.BorderForeground(a.theme.Selected)
 	}
-	return style.Render(a.sidebar.View(a.latestMarked, a.latestMessage, a.userPresence))
+	return style.Render(a.sidebar.View(a.theme, a.latestMarked, a.latestMessage, a.userPresence))
 }
 
 func (a *app) styleMainChat() string {
@@ -222,7 +250,7 @@ func (a *app) styleMainChat() string {
 func (a *app) styleMainInput() string {
 	style := inputStyle
 	if a.focused == FocusInput {
-		style = style.BorderForeground(styles.Pink)
+		style = style.BorderForeground(a.theme.Selected)
 	}
 	return style.Render(a.input.View())
 }
@@ -230,7 +258,7 @@ func (a *app) styleMainInput() string {
 func (a *app) styleThreadChat() string {
 	style := threadChatStyle
 	if a.focused == FocusThreadChat {
-		style = style.BorderForeground(styles.Pink)
+		style = style.BorderForeground(a.theme.Selected)
 	}
 	return style.Render(a.threadWindow.chat.viewport.View())
 }
@@ -238,12 +266,38 @@ func (a *app) styleThreadChat() string {
 func (a *app) styleThreadInput() string {
 	style := threadInputStyle
 	if a.focused == FocusThreadInput {
-		style = style.BorderForeground(styles.Pink)
+		style = style.BorderForeground(a.theme.Selected)
 	}
 	return style.Render(a.threadWindow.input.View())
 }
 
 func (a *app) renderLine() string {
-	s := lg.NewStyle().Foreground(styles.Muted).Render(strings.Repeat("━", a.threadWindow.chat.chatWidth))
+	s := lg.NewStyle().Foreground(a.theme.Muted).Render(strings.Repeat("━", a.threadWindow.chat.chatWidth))
 	return s
+}
+
+func InitializeStyles(theme styles.Theme) {
+	sidebarStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(theme.Border).
+		Background(theme.Background).BorderBackground(theme.Background)
+
+	inputStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(theme.Border).
+		Foreground(theme.Text).Background(theme.Background).BorderBackground(theme.Background)
+
+	chatStyle = styles.BoxWithLabel{
+		BoxStyle: lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(theme.Border).
+			Background(theme.Background).BorderBackground(theme.Background),
+		LabelStyle: lg.NewStyle().Foreground(theme.Text).Bold(true).Background(theme.Background).BorderBackground(theme.Background),
+	}
+
+	focusedChatStyle = styles.BoxWithLabel{
+		BoxStyle: lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(theme.Selected).
+			Background(theme.Background).BorderBackground(theme.Background),
+		LabelStyle: lg.NewStyle().Foreground(theme.Text).Bold(true).Background(theme.Background).BorderBackground(theme.Background),
+	}
+
+	threadChatStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(theme.Border).
+		Background(theme.Background).BorderBackground(theme.Background)
+
+	threadInputStyle = lg.NewStyle().Border(lg.RoundedBorder(), true).BorderForeground(theme.Border).
+		Foreground(theme.Text).Background(theme.Background).BorderBackground(theme.Background)
 }
