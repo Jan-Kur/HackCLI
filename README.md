@@ -1,6 +1,7 @@
 # HackCLI
-**Slack terminal client for Hack Clubbers**
-Faster than alt-tabbing to an already slow Slack. Check channels or DMs, ping staff or do whatever the heck you want all without leaving your IDE. And it low-key looks better than the original slack app
+#### Slack terminal client for Hack Clubbers
+Faster than alt-tabbing to an already slow Slack. Check channels or DMs, ping staff or do whatever the heck you want all without leaving your IDE.
+*You won't want to go back*
 
 ## Installation guide
 
