@@ -3,6 +3,10 @@
 Faster than alt-tabbing to an already slow Slack. Check channels or DMs, ping staff or do whatever the heck you want all without leaving your IDE.
 *You won't want to go back*
 
+
+https://github.com/user-attachments/assets/d84b1325-e834-456d-beb3-e824d3b1f326
+
+
 ## Installation guide
 ### macOS & Linux (via Homebrew)
 
