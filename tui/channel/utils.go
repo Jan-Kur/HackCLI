@@ -2,7 +2,6 @@ package channel
 
 import (
 	"fmt"
-	"log"
 	"regexp"
 	"slices"
 	"strings"
@@ -442,8 +441,6 @@ func (a *app) getChannel(channelID string, instant bool) string {
 						LatestMes: "",
 					}
 				} else {
-					log.Printf("LastRead: %v, LatestMessage: %v", channel.LastRead, latest.Timestamp)
-
 					a.MsgChan <- core.ChannelInfoLoadedMsg{
 						Channel:   channel,
 						LatestMes: latest.Timestamp,

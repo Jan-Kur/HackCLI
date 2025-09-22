@@ -2,9 +2,7 @@ package channel
 
 import (
 	"fmt"
-	"log"
 	"net/http"
-	"os"
 
 	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
@@ -15,9 +13,6 @@ import (
 )
 
 func Start(initialChannel string) *app {
-	f, _ := os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644) //FOR DEBUGGING ONLY
-	log.SetOutput(f)
-
 	cfg, err := api.LoadConfig()
 	if err != nil {
 		panic(fmt.Sprintf("Couldn't load config: %v", err))
