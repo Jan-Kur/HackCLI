@@ -4,7 +4,6 @@ Faster than alt-tabbing to an already slow Slack. Check channels or DMs, ping st
 *You won't want to go back*
 
 ## Installation guide
-
 ### macOS & Linux (via Homebrew)
 
 If you're on macOS or Linux, the easiest way to install is using [Homebrew](https://brew.sh/).
@@ -54,6 +53,9 @@ You can always download the latest binary directly from the releases page.
 3.  Extract the binary.
 4.  Move the `hackcli` (or `hackcli.exe`) binary to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `C:\Program Files\hackcli`).
 
+## Setup
+HackCLI mimics your slack browser session, in order to have all its functionality. Before using the app, make sure to visit the [**usage guide**](USAGE.md) to configure the app properly and learn how to use it. 
+
 ## Contributions are welcome
-Let's all make this the superior slack for Hack Clubbers. If you see a bug you are more than welcome to submit an issue. If you are feeling like being a gigachad you can also fix a bug or add a feature yourself and submit a PR - your effort won't go unseen, trust me. 
+Let's all make this the superior slack for Hack Clubbers. If you see a bug you are more than welcome to submit an issue. If you are feeling like being a gigachad you can also fork the repo, fix a bug or add a feature yourself and submit a PR - your effort won't go unseen, trust me. Visit the [contributing guide](CONTRIBUTING.md) for more details.
 
