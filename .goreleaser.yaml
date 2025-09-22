@@ -1,0 +1,52 @@
+project_name: hackcli
+
+builds:
+  - binary: hackcli
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  prerelease: auto
+
+homebrew_casks:
+  - name: hackcli
+    tap:
+      owner: Jan-Kur
+      name: homebrew-hackcli
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    homepage: "https://github.com/Jan-Kur/HackCLI"
+    description: "Slack terminal client for Hack Clubbers"
+    license: "MIT"
+    install: |
+      bin.install "hackcli"
+scoop:
+  bucket:
+    owner: Jan-Kur
+    name: scoop-hackcli
+    token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+  commit_author:
+    name: goreleaserbot
+    email: bot@goreleaser.com
+  homepage: "https://github.com/Jan-Kur/HackCLI"
+  description: "Slack terminal client for Hack Clubbers"
+  license: "MIT"
