@@ -2,7 +2,6 @@ package api
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/Jan-Kur/HackCLI/core"
@@ -61,7 +60,6 @@ func GetChannelHistory(api *slack.Client, channelID string) tea.Cmd {
 
 		history, err := api.GetConversationHistory(params)
 		if err != nil {
-			log.Printf("Error getting channel history: %v", err)
 			return nil
 		}
 
@@ -117,7 +115,6 @@ func GetThread(api *slack.Client, channelID string, ts string) tea.Cmd {
 			return msgs, nextCursor, err
 		})
 		if err != nil {
-			log.Printf("Error getting replies: %v", err)
 			return nil
 		}
 
@@ -162,35 +159,10 @@ func GetUserInfo(api *slack.Client, userID string) (*slack.User, error) {
 	})
 
 	if err != nil {
-		log.Printf("Error getting user info: %v, userID: %v", err, userID)
 		return nil, err
 	}
 
 	return fetchedUser, nil
-}
-
-func SendMessage(api *slack.Client, currentChannel string, content string) {
-	var err error
-	WithRetry(func() error {
-		_, _, _, err = api.SendMessage(currentChannel, slack.MsgOptionText(content, false))
-		return err
-	})
-
-	if err != nil {
-		log.Printf("Error sending message: %v", err)
-	}
-}
-
-func SendReply(api *slack.Client, currentChannel string, content string, parentTs string) {
-	var err error
-	WithRetry(func() error {
-		_, _, _, err = api.SendMessage(currentChannel, slack.MsgOptionText(content, false), slack.MsgOptionTS(parentTs))
-		return err
-	})
-
-	if err != nil {
-		log.Printf("Error sending reply: %v", err)
-	}
 }
 
 func GetLatestMessage(api *slack.Client, channelID string) (*slack.Message, error) {

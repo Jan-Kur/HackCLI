@@ -15,15 +15,22 @@ import (
 )
 
 func Start(initialChannel string) *app {
-	f, err := os.Create("debug.log")
-	if err != nil {
-		panic(err)
-	}
+	f, _ := os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644) //FOR DEBUGGING ONLY
 	log.SetOutput(f)
 
 	cfg, err := api.LoadConfig()
 	if err != nil {
 		panic(fmt.Sprintf("Couldn't load config: %v", err))
+	}
+
+	firstRun := false
+	cache := api.LoadCache()
+	if cache == nil {
+		cache = &core.Cache{
+			Conversations: make(map[string]*core.Conversation),
+			Users:         make(map[string]*core.User),
+		}
+		firstRun = true
 	}
 
 	httpCl := utils.NewCookieHTTP("https://slack.com", utils.ConvertCookies([]http.Cookie{{Name: "d", Value: cfg.Cookie}}))
@@ -45,6 +52,10 @@ func Start(initialChannel string) *app {
 				isVisible: false,
 				input:     initializePopup(styles.Themes[cfg.Theme]),
 			},
+			errorPopup: errorPopup{
+				theme:     styles.Themes[cfg.Theme],
+				isVisible: false,
+			},
 			theme: styles.Themes[cfg.Theme],
 			threadWindow: threadWindow{
 				isOpen: false,
@@ -53,24 +64,20 @@ func Start(initialChannel string) *app {
 				},
 				input: initializeInput(styles.Themes[cfg.Theme]),
 			},
-			latestMarked:  make(map[string]string),
-			latestMessage: make(map[string]string),
-			userPresence:  make(map[string]string),
 		},
 		App: core.App{
-			User:      user.UserID,
-			Config:    cfg,
-			Client:    client,
-			MsgChan:   msgChan,
-			UserCache: make(map[string]string),
+			User:           user.UserID,
+			Config:         cfg,
+			Cache:          cache,
+			InitialLoading: firstRun,
+			CurrentChannel: initialChannel,
+			Client:         client,
+			MsgChan:        msgChan,
 		},
 	}
 	InitializeStyles(a.theme)
 
-	l, initialChannelID := a.initializeSidebar(initialChannel)
-
-	a.sidebar = l
-	a.CurrentChannel = initialChannelID
+	a.LoadConversations()
 
 	go api.RunWebsocket(a.Config.Token, a.Config.Cookie, a.MsgChan)
 

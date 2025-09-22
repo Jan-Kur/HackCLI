@@ -1,9 +1,10 @@
 package channel
 
 import (
-	"log"
+	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
@@ -26,13 +27,11 @@ type model struct {
 	input                     textarea.Model
 	threadWindow              threadWindow
 	popup                     popup
+	errorPopup                errorPopup
 	theme                     styles.Theme
 	focused                   FocusState
 	width, height             int
 	sidebarWidth, inputHeight int
-	latestMarked              map[string]string
-	latestMessage             map[string]string
-	userPresence              map[string]string
 }
 
 type threadWindow struct {
@@ -43,13 +42,19 @@ type threadWindow struct {
 }
 
 type popup struct {
-	theme        styles.Theme
-	overlay      *overlay.Model
-	input        textarea.Model
-	isVisible    bool
-	popupType    PopupType
-	targetMes    core.Message
-	errorMessage string
+	theme     styles.Theme
+	overlay   *overlay.Model
+	input     textarea.Model
+	isVisible bool
+	popupType PopupType
+	targetMes core.Message
+}
+
+type errorPopup struct {
+	theme     styles.Theme
+	overlay   *overlay.Model
+	isVisible bool
+	err       string
 }
 
 var (
@@ -77,7 +82,7 @@ const (
 	PopupReaction PopupType = iota
 	PopupEdit
 	PopupJoinChannel
-	PopupErrorMessage
+	PopupError
 )
 
 const (
@@ -90,7 +95,11 @@ const (
 )
 
 func (a *app) Init() tea.Cmd {
-	return api.GetChannelHistory(a.Client, a.CurrentChannel)
+	if !a.InitialLoading {
+		return api.GetChannelHistory(a.Client, a.CurrentChannel)
+	} else {
+		return nil
+	}
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -142,7 +151,10 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.popup.isVisible = false
 					return a, nil
 				case PopupJoinChannel:
-					go a.Client.JoinConversation(content)
+					go func() {
+						_, _, _, err := a.Client.JoinConversation(content)
+						a.showErrorPopup(fmt.Sprintf("Error joining channel: %v", err))
+					}()
 
 					a.popup.input.Reset()
 					a.popup.isVisible = false
@@ -193,11 +205,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if msg.LatestTs != "" {
-			a.latestMarked[a.CurrentChannel] = msg.LatestTs
-			a.latestMessage[a.CurrentChannel] = msg.LatestTs
+			a.Cache.Conversations[a.CurrentChannel].LastRead = msg.LatestTs
+			a.Cache.Conversations[a.CurrentChannel].LatestMessage = msg.LatestTs
 			go func() {
 				if err := a.Client.MarkConversation(a.CurrentChannel, msg.LatestTs); err != nil {
-					log.Printf("Couldn't mark conversation as read: %v", err)
+					a.showErrorPopup(fmt.Sprintf("Error marking conversation as read: %v", err))
 				}
 			}()
 		}
@@ -373,18 +385,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case core.ChannelJoinedMsg:
 		cmds = append(cmds, func() tea.Msg {
-			channel, err := a.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-				ChannelID:         msg.Channel,
-				IncludeLocale:     false,
-				IncludeNumMembers: false,
-			})
-			if err != nil {
-				log.Println(err)
-			}
-			return core.ChannelInfoLoadedMsg{Channel: channel}
+			channelName := a.getChannel(msg.Channel, true)
+			return core.InsertChannelInSidebarMsg{ChannelName: channelName, ChannelID: msg.Channel}
 		})
 
-	case core.ChannelInfoLoadedMsg:
+	case core.InsertChannelInSidebarMsg:
 		startIndex := 1
 		var endIndex int
 
@@ -398,7 +403,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		insertIndex := endIndex
 
 		for i := startIndex; i < endIndex; i++ {
-			if msg.Channel.Name < a.sidebar.items[i].title {
+			if msg.ChannelName < a.sidebar.items[i].title {
 				insertIndex = i
 				break
 			} else {
@@ -407,8 +412,8 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		a.sidebar.items = slices.Insert(a.sidebar.items, insertIndex, sidebarItem{
-			title: msg.Channel.Name,
-			id:    msg.Channel.ID,
+			title: msg.ChannelName,
+			id:    msg.ChannelID,
 		})
 
 		a.rerenderSidebar()
@@ -441,14 +446,32 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-			a.Mutex.Lock()
-			a.UserCache[msg.User.ID] = username
-			a.Mutex.Unlock()
+			a.Cache.Users[msg.User.ID] = &core.User{ID: msg.User.ID, Name: sanitize(username)}
+
+			go api.SaveCache(*a.Cache)
 
 			if !msg.IsHistory {
+				userMentionPattern := fmt.Sprintf(`<@%s`, msg.User.ID)
+
 				var indices []int
 				for i, mes := range a.chat.messages {
-					if mes.User == msg.User.ID {
+					if mes.User == msg.User.ID || strings.Contains(mes.Content, userMentionPattern) {
+						indices = append(indices, i)
+						continue
+					}
+
+					var replyUserIDs []string
+					for _, userID := range mes.ReplyUsers {
+						if len(replyUserIDs) == 3 {
+							break
+						}
+
+						if !slices.Contains(replyUserIDs, userID) {
+							replyUserIDs = append(replyUserIDs, userID)
+						}
+					}
+
+					if slices.Contains(replyUserIDs, msg.User.ID) {
 						indices = append(indices, i)
 					}
 				}
@@ -459,7 +482,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.threadWindow.isOpen {
 					var threadIndices []int
 					for i, mes := range a.threadWindow.chat.messages {
-						if mes.User == msg.User.ID {
+						if mes.User == msg.User.ID || strings.Contains(mes.Content, userMentionPattern) {
 							threadIndices = append(threadIndices, i)
 						}
 					}
@@ -469,14 +492,45 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+	case core.ChannelInfoLoadedMsg:
+		a.Cache.Conversations[msg.Channel.ID] = &core.Conversation{
+			ID:            msg.Channel.ID,
+			Name:          msg.Channel.Name,
+			LastRead:      msg.Channel.LastRead,
+			LatestMessage: msg.LatestMes,
+		}
+
+		go api.SaveCache(*a.Cache)
+
+		channelMentionPattern := fmt.Sprintf(`<#%s`, msg.Channel.ID)
+
+		var indices []int
+		for i, mes := range a.chat.messages {
+			if strings.Contains(mes.Content, channelMentionPattern) {
+				indices = append(indices, i)
+			}
+		}
+		if len(indices) > 0 {
+			a.updateMessage(&cmds, &a.chat, false, indices...)
+		}
+
+		var threadIndices []int
+		for i, mes := range a.threadWindow.chat.messages {
+			if strings.Contains(mes.Content, channelMentionPattern) {
+				threadIndices = append(threadIndices, i)
+			}
+		}
+		if len(threadIndices) > 0 {
+			a.updateMessage(&cmds, &a.threadWindow.chat, true, threadIndices...)
+		}
+
 	case core.HandleEventMsg:
 		switch ev := msg.Event.(type) {
 		case *api.MessageEvent:
 			if ev.SubType == "" && (ev.ThreadTimestamp == "" || ev.Timestamp == ev.ThreadTimestamp) {
 				if ev.Channel == a.CurrentChannel {
-					a.latestMarked[ev.Channel] = ev.Timestamp
+					a.Cache.Conversations[ev.Channel].LastRead = ev.Timestamp
 				}
-				a.latestMessage[ev.Channel] = ev.Timestamp
 			}
 
 			if ev.Channel == a.CurrentChannel {
@@ -503,7 +557,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		var dmItems []sidebarItem
 		for _, dm := range msg.DMs {
-			dmItems = append(dmItems, sidebarItem{title: dm.Name, id: dm.ID, isHeader: false, userID: dm.UserID})
+			dmItems = append(dmItems, sidebarItem{title: dm.Name, id: dm.ID, isHeader: false, userID: dm.User.ID})
 		}
 		i := len(a.sidebar.items) - 1
 		a.sidebar.items = append(a.sidebar.items[:i], a.sidebar.items[i+1:]...)
@@ -520,11 +574,39 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case core.ChannelReadMsg:
-		a.latestMarked[msg.ChannelID] = msg.LastRead
-		a.latestMessage[msg.ChannelID] = msg.LatestTs
+		a.Cache.Conversations[msg.ChannelID].LastRead = msg.LastRead
+		a.Cache.Conversations[msg.ChannelID].LatestMessage = msg.LatestTs
+		go api.SaveCache(*a.Cache)
+		a.rerenderSidebar()
 
 	case core.PresenceChangedMsg:
-		a.userPresence[msg.User] = msg.Presence
+		a.Cache.Conversations[msg.DmID].UserPresence = msg.Presence
+		go api.SaveCache(*a.Cache)
+		a.rerenderSidebar()
+
+	case core.WaitMsg:
+		return a, tea.Tick(msg.Duration, func(t time.Time) tea.Msg {
+			return msg.Msg
+		})
+	case core.CloseErrorPopupMsg:
+		a.errorPopup.isVisible = false
+		a.errorPopup.err = ""
+	case core.FetchedCacheMsg:
+		for _, conv := range msg.Conversations {
+			a.Cache.Conversations[conv.ID] = conv
+		}
+
+		for _, user := range msg.Users {
+			a.Cache.Users[user.ID] = user
+		}
+
+		go api.SaveCache(*a.Cache)
+
+		if a.InitialLoading {
+			a.initializeSidebar(msg.SidebarChannels, msg.SidebarDms)
+			cmds = append(cmds, api.GetChannelHistory(a.Client, a.CurrentChannel))
+			a.InitialLoading = false
+		}
 
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -589,7 +671,6 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.popup.input.Focus()
 			case "l":
 				a.Client.LeaveConversation(a.sidebar.items[a.sidebar.selectedItem].id)
-				log.Println("Left conversation: ", a.sidebar.items[a.sidebar.selectedItem].title)
 			}
 		}
 		a.sidebar, focusCmd = a.sidebar.Update(msg)
@@ -609,7 +690,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content := a.input.Value()
 				if strings.TrimSpace(content) != "" {
 					a.input.Reset()
-					go api.SendMessage(a.Client, a.CurrentChannel, content)
+					go a.SendMessage(content)
 					return a, nil
 				}
 			}
@@ -632,7 +713,7 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				content := a.threadWindow.input.Value()
 				if strings.TrimSpace(content) != "" {
 					a.threadWindow.input.Reset()
-					go api.SendReply(a.Client, a.CurrentChannel, content, a.threadWindow.parentTs)
+					go a.SendReply(content, a.threadWindow.parentTs)
 					return a, nil
 				}
 			}
@@ -646,6 +727,24 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a *app) View() string {
+	if a.InitialLoading {
+		s := lg.NewStyle().
+			Width(a.width).
+			Height(a.height).
+			Align(lg.Center, lg.Center).
+			Background(a.theme.Background).
+			Foreground(a.theme.Primary).
+			Render(`
+██╗      ██████╗  █████╗ ██████╗ ██╗███╗   ██╗ ██████╗ 
+██║     ██╔═══██╗██╔══██╗██╔══██╗██║████╗  ██║██╔════╝ 
+██║     ██║   ██║███████║██║  ██║██║██╔██╗ ██║██║  ███╗
+██║     ██║   ██║██╔══██║██║  ██║██║██║╚██╗██║██║   ██║
+███████╗╚██████╔╝██║  ██║██████╔╝██║██║ ╚████║╚██████╔╝
+╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚═╝╚═╝  ╚═══╝ ╚═════╝ 
+`)
+		return s
+	}
+
 	if a.width < minWidth {
 		s := lg.NewStyle().Foreground(styles.Pink).Bold(true).Render("Too small")
 		return s
@@ -678,9 +777,25 @@ func (a *app) View() string {
 	}
 
 	if a.popup.isVisible {
+		if a.errorPopup.isVisible {
+			bg := background{view: s}
+			fg := a.errorPopup
+			bgWithErrorPopup := overlay.New(fg, bg, overlay.Right, overlay.Top, 0, 0).View()
+
+			finalBg := background{view: bgWithErrorPopup}
+			finalFg := a.popup
+			return overlay.New(finalFg, finalBg, overlay.Center, overlay.Center, 0, 0).View()
+		}
+
 		bg := background{view: s}
-		fg := popup{input: a.popup.input, theme: a.theme}
+		fg := a.popup
 		return overlay.New(fg, bg, overlay.Center, overlay.Center, 0, 0).View()
+	}
+
+	if a.errorPopup.isVisible {
+		bg := background{view: s}
+		fg := a.errorPopup
+		return overlay.New(fg, bg, overlay.Right, overlay.Top, 0, 0).View()
 	}
 
 	return s

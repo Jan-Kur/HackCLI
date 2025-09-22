@@ -2,6 +2,7 @@ package core
 
 import (
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/slack-go/slack"
@@ -13,13 +14,34 @@ type Config struct {
 	Theme  string `json:"theme"`
 }
 
+type Cache struct {
+	Users         map[string]*User
+	Conversations map[string]*Conversation
+}
+
+type User struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type Conversation struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	User          User   `json:"user"`
+	UserPresence  string `json:"user_presence"`
+	LastRead      string `json:"last_read"`
+	LatestMessage string `json:"latest_message"`
+	IsMember      bool   `json:"is_member"`
+}
+
 type App struct {
 	User           string
 	Config         Config
+	Cache          *Cache
+	InitialLoading bool
 	Client         *slack.Client
 	MsgChan        chan tea.Msg
 	CurrentChannel string
-	UserCache      map[string]string
 	Mutex          sync.RWMutex
 }
 
@@ -39,12 +61,6 @@ type Message struct {
 type Reaction struct {
 	Users []string
 	Count int
-}
-
-type Channel struct {
-	Name   string
-	ID     string
-	UserID string
 }
 
 type Attachment struct {
@@ -106,7 +122,7 @@ type HandleEventMsg struct {
 }
 
 type DMsLoadedMsg struct {
-	DMs []Channel
+	DMs []Conversation
 }
 
 type ReactionScrollMsg struct {
@@ -120,7 +136,7 @@ type ChannelReadMsg struct {
 }
 
 type PresenceChangedMsg struct {
-	User     string
+	DmID     string
 	Presence string
 }
 
@@ -137,5 +153,25 @@ type ChannelLeftMsg struct {
 }
 
 type ChannelInfoLoadedMsg struct {
-	Channel *slack.Channel
+	Channel   *slack.Channel
+	LatestMes string
+}
+
+type WaitMsg struct {
+	Msg      tea.Msg
+	Duration time.Duration
+}
+
+type CloseErrorPopupMsg struct{}
+
+type InsertChannelInSidebarMsg struct {
+	ChannelName string
+	ChannelID   string
+}
+
+type FetchedCacheMsg struct {
+	Users           map[string]*User
+	Conversations   map[string]*Conversation
+	SidebarChannels []Conversation
+	SidebarDms      []Conversation
 }

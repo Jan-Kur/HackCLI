@@ -8,38 +8,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
-	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
 
-func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
-	username := a.getUser(mes.User)
-
-	var cmds []tea.Cmd
-	if username == "LOADING" {
-		cmds = append(cmds, func() tea.Msg {
-			user, err := api.GetUserInfo(a.Client, mes.User)
-			if err != nil {
-				return nil
-			}
-			return core.UserInfoLoadedMsg{User: user, IsHistory: false}
-		})
-		username = "..."
-	}
+func (a *app) formatMessage(mes core.Message, chat *chat) string {
+	username := a.getUser(mes.User, false)
 
 	parts := strings.Split(mes.Ts, ".")
 	sec, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return "", tea.Batch(cmds...)
+		return ""
 	}
 	nsec, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return "", tea.Batch(cmds...)
+		return ""
 	}
 	timestamp := time.Unix(sec, nsec*1000).Format("15:04")
-	text := mes.Content
+
+	text := a.findMentionsInMessageContent(mes.Content)
 
 	type reactionItem struct {
 		emoji string
@@ -189,17 +176,7 @@ func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 				continue
 			}
 
-			name := a.getUser(userID)
-			if name == "LOADING" {
-				cmds = append(cmds, func() tea.Msg {
-					user, err := api.GetUserInfo(a.Client, userID)
-					if err != nil {
-						return nil
-					}
-					return core.UserInfoLoadedMsg{User: user, IsHistory: false}
-				})
-				name = "..."
-			}
+			name := a.getUser(userID, false)
 
 			usernames = append(usernames, name)
 			userIDs = append(userIDs, userID)
@@ -238,23 +215,36 @@ func (a *app) formatMessage(mes core.Message, chat *chat) (string, tea.Cmd) {
 			Width(chat.chatWidth-4).
 			Render(bottomBlockStyled))
 
-	return lg.NewStyle().Width(chat.chatWidth - 2).Render(finalBlock), tea.Batch(cmds...)
+	return lg.NewStyle().Width(chat.chatWidth - 2).Render(finalBlock)
 }
 
-func (a *app) getUser(userID string) string {
-	a.Mutex.RLock()
-	user, ok := a.UserCache[userID]
-	a.Mutex.RUnlock()
-	if ok {
-		return user
-	}
-	a.Mutex.Lock()
-	if user, ok := a.UserCache[userID]; ok {
-		a.Mutex.Unlock()
-		return user
-	}
-	a.UserCache[userID] = "..."
-	a.Mutex.Unlock()
+func (a *app) styleUserMention(userMention string) string {
+	username := a.getUser(userMention, false)
 
-	return "LOADING"
+	s := lg.NewStyle().
+		Foreground(a.theme.Text).
+		Background(a.theme.Primary).
+		Render("@" + username)
+
+	return s
+}
+
+func (a *app) styleChannelMention(channelMention string) string {
+	channelName := a.getChannel(channelMention, false)
+
+	s := lg.NewStyle().
+		Foreground(a.theme.Text).
+		Background(a.theme.Primary).
+		Render("#" + channelName)
+
+	return s
+}
+
+func (a *app) styleLink(link string) string {
+	s := lg.NewStyle().
+		Foreground(a.theme.Text).
+		Background(a.theme.Secondary).
+		Render(link)
+
+	return s
 }

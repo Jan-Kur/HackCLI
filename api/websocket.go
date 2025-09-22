@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"reflect"
 	"time"
@@ -43,11 +42,6 @@ func RunWebsocket(token, cookie string, msgChan chan tea.Msg) {
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Unexpected error: %v", err)
-			} else {
-				log.Printf("Expected error: %v", err)
-			}
 			break
 		}
 		var initialEvent InitialEvent
@@ -76,7 +70,6 @@ func ack(conn *websocket.Conn) {
 func MessageHandler(msgChan chan tea.Msg, ev *MessageEvent) {
 	switch ev.SubType {
 	case "message_deleted":
-		log.Printf("message was deleted")
 		msgChan <- core.DeletedMessageMsg{DeletedTs: ev.DeletedTimestamp}
 		return
 	case "message_changed":
@@ -144,7 +137,6 @@ func createEventStruct(eventType string, rawData []byte) any {
 	newEvent := reflect.New(structType).Interface()
 
 	if err := json.Unmarshal(rawData, newEvent); err != nil {
-		log.Printf("Failed to unmarshal %s event: %v", eventType, err)
 		return nil
 	}
 

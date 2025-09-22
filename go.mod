@@ -11,10 +11,12 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-runewidth v0.0.16
+	github.com/muesli/reflow v0.3.0
 	github.com/rmhubbert/bubbletea-overlay v0.4.0
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/net v0.43.0
+	golang.org/x/text v0.28.0
 )
 
 require (
@@ -38,5 +40,4 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
 )

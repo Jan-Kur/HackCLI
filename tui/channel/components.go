@@ -1,12 +1,8 @@
 package channel
 
 import (
-	"fmt"
-	"log"
-	"slices"
 	"strings"
 
-	"github.com/Jan-Kur/HackCLI/api"
 	"github.com/Jan-Kur/HackCLI/core"
 	"github.com/Jan-Kur/HackCLI/tui/styles"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -14,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
-	"github.com/slack-go/slack"
+	"github.com/muesli/reflow/wordwrap"
 )
 
 const (
@@ -86,126 +82,22 @@ func initializeInput(theme styles.Theme) textarea.Model {
 	return t
 }
 
-func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
-	var items []sidebarItem
+func (a *app) initializeSidebar(channels []core.Conversation, dms []core.Conversation) {
+	items := a.buildSidebar(channels, dms)
 
-	userChannelParams := &slack.GetConversationsForUserParameters{
-		Types:           []string{"public_channel", "private_channel"},
-		ExcludeArchived: true,
-		Limit:           100,
-	}
-
-	userChannels, err := api.Paginate(func(cursor string) ([]slack.Channel, string, error) {
-		userChannelParams.Cursor = cursor
-		return a.Client.GetConversationsForUser(userChannelParams)
-	})
-	if err != nil {
-		panic(fmt.Sprintf("Error getting userChannels: %v", err))
-	}
-
-	directConvParams := &slack.GetConversationsForUserParameters{
-		Types:           []string{"im"},
-		ExcludeArchived: true,
-		Limit:           100,
-	}
-
-	items = append([]sidebarItem{{title: "════ CHANNELS ═════════════════════════════════════════════════════════════════════════════", id: "", isHeader: true}}, items...)
-
-	slices.SortFunc(userChannels, func(a, b slack.Channel) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
-	})
-
-	for _, ch := range userChannels {
-		items = append(items, sidebarItem{id: ch.ID, title: ch.Name})
-	}
-	go func() {
-		for _, ch := range userChannels {
-			channel, err := a.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-				ChannelID:     ch.ID,
-				IncludeLocale: true,
-			})
-			if err != nil {
-				log.Printf("Error getting conversation info: %v", err)
-			}
-
-			messageTs := ""
-
-			message, err := api.GetLatestMessage(a.Client, ch.ID)
-			if err == nil {
-				messageTs = message.Timestamp
-			}
-
-			a.MsgChan <- core.ChannelReadMsg{ChannelID: ch.ID, LatestTs: messageTs, LastRead: channel.LastRead}
-		}
-	}()
-
-	items = append(items,
-		sidebarItem{title: "════ DMs ═════════════════════════════════════════════════════════════════════════════", id: "", isHeader: true},
-		sidebarItem{title: "Loading...", id: "", isHeader: true})
-
-	go func() {
-		directConvs, err := api.Paginate(func(cursor string) ([]slack.Channel, string, error) {
-			directConvParams.Cursor = cursor
-			return a.Client.GetConversationsForUser(directConvParams)
-		})
-		if err != nil {
-			panic(fmt.Sprintf("Error getting DMs: %v", err))
-		}
-
-		var dmsWithMessages []core.Channel
-
-		for _, dm := range directConvs {
-			latest, err := api.GetLatestMessage(a.Client, dm.ID)
-			if err != nil {
-				continue
-			}
-
-			dmInfo, err := a.Client.GetConversationInfo(&slack.GetConversationInfoInput{
-				ChannelID:     dm.ID,
-				IncludeLocale: true,
-			})
-			if err != nil {
-				log.Printf("Error getting conversation info: %v", err)
-			}
-
-			username := a.getUser(dm.User)
-			if username == "LOADING" {
-				user, err := api.GetUserInfo(a.Client, dm.User)
-				if err != nil {
-					continue
-				}
-				if user.Profile.DisplayName == "" {
-					username = user.Profile.FirstName
-				} else {
-					username = user.Profile.DisplayName
-				}
-			}
-			dmsWithMessages = append(dmsWithMessages, core.Channel{Name: username, ID: dm.ID, UserID: dm.User})
-
-			a.MsgChan <- core.ChannelReadMsg{LatestTs: latest.Timestamp, LastRead: dmInfo.LastRead,
-				ChannelID: dm.ID}
-		}
-
-		slices.SortFunc(dmsWithMessages, func(a, b core.Channel) int {
-			return strings.Compare(a.Name, b.Name)
-		})
-
-		a.MsgChan <- core.DMsLoadedMsg{DMs: dmsWithMessages}
-	}()
-
-	initialChannel = strings.TrimPrefix(initialChannel, "#")
+	a.CurrentChannel = strings.TrimPrefix(a.CurrentChannel, "#")
 
 	var initialChannelID string
-	for _, ch := range userChannels {
-		if ch.Name == initialChannel {
+	for _, ch := range channels {
+		if ch.Name == a.CurrentChannel {
 			initialChannelID = ch.ID
 			break
+		}
+	}
+
+	for _, dm := range dms {
+		if dm.User.Name == a.CurrentChannel {
+			initialChannelID = dm.ID
 		}
 	}
 
@@ -213,7 +105,7 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 		if len(items) > 0 {
 			initialChannelID = items[1].id
 		} else {
-			panic("NO CHANNELS, ABORT")
+			a.showErrorPopup("No channels detected")
 		}
 	}
 	var selectedItem int
@@ -227,15 +119,10 @@ func (a *app) initializeSidebar(initialChannel string) (sidebar, string) {
 		}
 	}
 
-	l := sidebar{
-		items:        items,
-		selectedItem: selectedItem,
-		openChannel:  selectedItem,
-		width:        0,
-		height:       0,
-	}
-
-	return l, initialChannelID
+	a.sidebar.items = items
+	a.sidebar.selectedItem = selectedItem
+	a.sidebar.openChannel = selectedItem
+	a.CurrentChannel = initialChannelID
 }
 
 func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
@@ -281,7 +168,7 @@ func (s sidebar) Update(msg tea.Msg) (sidebar, tea.Cmd) {
 	return s, nil
 }
 
-func (s sidebar) View(theme styles.Theme, latestMarked map[string]string, latestMessage map[string]string, userPresence map[string]string) string {
+func (s sidebar) View(theme styles.Theme, cache *core.Cache) string {
 	const (
 		borderX      = 2
 		IconBoxWidth = 3
@@ -322,7 +209,7 @@ func (s sidebar) View(theme styles.Theme, latestMarked map[string]string, latest
 				items = append(items, headerStyle.Render(truncated))
 			}
 		} else {
-			unread := latestMarked[item.id] < latestMessage[item.id]
+			unread := cache.Conversations[item.id].LastRead < cache.Conversations[item.id].LatestMessage
 
 			channelStyle := lg.NewStyle().
 				Border(lg.RoundedBorder(), true, true, true, false).
@@ -341,7 +228,7 @@ func (s sidebar) View(theme styles.Theme, latestMarked map[string]string, latest
 
 			icon := "#"
 			if strings.HasPrefix(item.id, "D") {
-				if userPresence[item.userID] == "active" {
+				if cache.Conversations[item.id].UserPresence == "active" {
 					icon = "⬤"
 					iconBox = iconBox.Foreground(styles.Green)
 				} else {
@@ -368,11 +255,13 @@ func (s sidebar) View(theme styles.Theme, latestMarked map[string]string, latest
 				channelStyle = channelStyle.Foreground(theme.Selected)
 			}
 
+			availableWidth := s.width - borderX - IconBoxWidth - 1
 			var styledChannel string
-			if runewidth.StringWidth(item.title) <= s.width-1-borderX-IconBoxWidth {
+
+			if runewidth.StringWidth(item.title) <= availableWidth {
 				styledChannel = channelStyle.Render(item.title)
 			} else {
-				truncated := runewidth.Truncate(item.title, s.width-2-borderX-IconBoxWidth, "")
+				truncated := runewidth.Truncate(item.title, availableWidth-1, "")
 				styledChannel = channelStyle.Render(truncated + "…")
 			}
 
@@ -426,7 +315,7 @@ func (s *sidebar) nextItem(currentIndex int, direction int) int {
 }
 
 func (a *app) rerenderSidebar() {
-	a.sidebar.View(a.theme, a.latestMarked, a.latestMessage, a.userPresence)
+	a.sidebar.View(a.theme, a.Cache)
 }
 
 func (s *sidebar) visibleRange() (start, end int) {
@@ -479,8 +368,21 @@ func (p popup) View() string {
 	case PopupReaction, PopupEdit, PopupJoinChannel:
 		help := lg.NewStyle().Background(p.theme.Background).Foreground(p.theme.Subtle).Width(p.input.Width()).Render("\nAlt+Enter/Add  Esc/Cancel")
 		body = lg.JoinVertical(lg.Left, p.input.View(), help)
-	case PopupErrorMessage:
-		body = lg.NewStyle().Background(p.theme.Background).Foreground(styles.Pink).Render(p.errorMessage)
 	}
 	return box.Render(body)
+}
+
+func (e errorPopup) Init() tea.Cmd                           { return nil }
+func (e errorPopup) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return e, nil }
+func (e errorPopup) View() string {
+	box := lg.NewStyle().
+		Border(lg.RoundedBorder(), true).
+		BorderForeground(e.theme.Border).
+		Background(e.theme.Background).
+		BorderBackground(e.theme.Background).
+		Padding(0, 1)
+
+	wrapped := wordwrap.String(e.err, 30)
+
+	return box.Render(lg.NewStyle().Background(e.theme.Background).Foreground(styles.Pink).Render(wrapped))
 }
