@@ -8,6 +8,8 @@ https://github.com/user-attachments/assets/d84b1325-e834-456d-beb3-e824d3b1f326
 
 
 ## Installation guide
+In case HackCLI gets detected as virus do know that it's a false positive. Installing with go install should always work tho.
+
 ### macOS & Linux (via Homebrew)
 
 If you're on macOS or Linux, the easiest way to install is using [Homebrew](https://brew.sh/).

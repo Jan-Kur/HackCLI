@@ -12,6 +12,11 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    hooks:
+      predist:
+        - chmod +x {{ .Binary }}
 
 archives:
   - formats: ["tar.gz"]
