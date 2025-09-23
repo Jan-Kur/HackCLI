@@ -1,10 +1,19 @@
 **I know it seems like a lot of work, but it really isn't, takes like a minute and it's really worth it, don't be the average andy that can't survive 60 seconds without dopamine**
 
 ## Get the slack cookie (login with slack)
-First of all, you need to get a slack cookie from your slack browser session. The experience might vary in different browsers, but is similar in general. Here are the steps:
+First of all, you need to get a slack cookie from your slack browser session.
+
+<details>
+<summary>Is this safe?</summary>
+
+**yes** - I will be transparent here: normal slack api endpoints aren't sufficient for HackCLI's use case, so instead we ask you to get the cookie (from which the config wizard then gets the xoxc token) so that HackCLI can have the same privilages as your normal slack browser session and give you the slack experience. This approach is used by other projects too.
+Don't worry about your important data being stolen or whatever. HackCLI can only access what you can already see in Slack. On top of that, I don't steal any data and have no interest in doing so.
+</details>
+
+The experience might vary in different browsers, but is similar in general. Here are the steps:
 
 1. Visit https://hackclub.slack.com/ and log in if necessary. Make sure to choose the Hack Club workspace, HackCLI works only with it.
-2. Once you are inside the Hack Club workspace, open developer tools and head to the storage section (in Chrome this is under Application -> Storage). Under Cookies expand https://app.slack.com. You will see a bunch of cookies but what we care about is under the name "d". Click on it's value and copy it (it should start with **xoxd**).
+2. Once you are inside the Hack Club workspace, open developer tools and head to the storage section (in Chrome this is under Application -> Storage). Under Cookies expand `https://app.slack.com`. You will see a bunch of cookies but what we care about is under the name "d". Click on it's value and copy it (it should start with **xoxd**).
 3. Make sure to have this copied cookie ready, we will need it in the next section.
 
 ## Configure your HackCLI app
