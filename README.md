@@ -28,7 +28,7 @@ brew upgrade hackcli
 If you're on Windows, you can use the [Scoop](https://scoop.sh/) package manager.
 
 ```bash
-scoop bucket add jan-kur-bucket https://github.com/Jan-Kur/scoop-hackcli.git
+scoop bucket add hackcli https://github.com/Jan-Kur/scoop-hackcli.git
 scoop install hackcli
 ```
 
@@ -40,7 +40,7 @@ scoop update hackcli
 
 ### Go Install
 
-If you have [Go](https://go.dev/doc/install) installed, you can install directly from the source.
+If you have [Go](https://go.dev/doc/install) installed, you can just run:
 
 ```bash
 go install github.com/Jan-Kur/HackCLI@latest
